@@ -11,8 +11,13 @@ from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, Tabl
 def to_csv(records):
     if not records:
         return ""
+    fields = []
+    for r in records:
+        for k in r:
+            if k not in fields:
+                fields.append(k)
     buf = io.StringIO()
-    w = csv.DictWriter(buf, fieldnames=list(records[0].keys()))
+    w = csv.DictWriter(buf, fieldnames=fields, extrasaction="ignore")
     w.writeheader()
     for r in records:
         w.writerow({k: ("" if v is None else str(v)) for k, v in r.items()})
@@ -33,7 +38,8 @@ def to_pdf(records, title="Dark Force report"):
     flow = [Paragraph(title, h1), Spacer(1, 8)]
 
     def esc(x):
-        return (x or "").replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+        x = "" if x is None else str(x)
+        return x.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
 
     if records:
         cols = list(records[0].keys())
