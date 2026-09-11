@@ -1,0 +1,230 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>DarkForce — Threat Actor De-anonymization</title>
+<script src="https://unpkg.com/cytoscape@3/dist/cytoscape.min.js"></script>
+<style>
+:root{--bg:#0b1020;--panel:#121a30;--panel2:#0d1424;--line:#233151;--fg:#dbe4f5;--dim:#7d8db0;--acc:#3ddad7;--warn:#f0b429;--crit:#f25c5c;}
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:var(--bg);color:var(--fg);font:14px/1.5 "Segoe UI",system-ui,sans-serif}
+header{display:flex;align-items:center;gap:16px;padding:14px 22px;border-bottom:1px solid var(--line);background:var(--panel2)}
+header h1{font-size:18px;letter-spacing:1px}header h1 span{color:var(--acc)}
+nav{margin-left:auto;display:flex;gap:6px;flex-wrap:wrap}
+nav button{background:transparent;border:1px solid var(--line);color:var(--dim);padding:6px 12px;border-radius:6px;cursor:pointer}
+nav button.active{color:var(--acc);border-color:var(--acc);background:rgba(61,218,215,.08)}
+main{padding:20px;max-width:1400px;margin:0 auto}
+.panel{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:16px;margin-bottom:16px}
+.cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:10px;margin-bottom:16px}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:14px}
+.card b{font-size:24px;color:var(--acc)}
+.card small{color:var(--dim)}
+input,select,button{background:var(--panel2);border:1px solid var(--line);color:var(--fg);padding:8px 12px;border-radius:6px;font-size:13px}
+input{width:100%}
+.grow input{max-width:520px}
+table{width:100%;border-collapse:collapse;font-size:13px}
+th{color:var(--dim);text-align:left;padding:8px;border-bottom:1px solid var(--line);font-weight:600;font-size:11px;text-transform:uppercase;letter-spacing:.5px}
+td{padding:8px;border-bottom:1px solid var(--panel2)}
+tr:hover td{background:rgba(61,218,215,.06)}
+.badge{padding:2px 8px;border-radius:10px;font-size:11px;font-weight:600}
+.badge.medium{background:rgba(240,180,41,.15);color:var(--warn)}
+.badge.high,.badge.critical{background:rgba(242,92,92,.15);color:var(--crit)}
+.badge.low{background:rgba(61,218,215,.12);color:var(--acc)}
+.tag{display:inline-block;background:var(--panel2);border:1px solid var(--line);border-radius:14px;padding:1px 10px;margin:2px 3px 2px 0;font-size:12px}
+a{color:var(--acc);text-decoration:none;word-break:break-all}
+.accent{color:var(--acc)}.dim{color:var(--dim)}
+.grid2{display:grid;grid-template-columns:2fr 1fr;gap:16px}
+@media(max-width:900px){.grid2{grid-template-columns:1fr}}
+#cy{width:100%;height:560px;background:var(--panel2);border:1px solid var(--line);border-radius:8px}
+.row{display:flex;gap:10px;flex-wrap:wrap;margin-bottom:10px}
+.mt{margin-top:12px}
+.flex-between{display:flex;justify-content:space-between;align-items:center;gap:10px}
+#toast{position:fixed;bottom:16px;right:16px;background:var(--panel);border:1px solid var(--acc);color:var(--fg);padding:10px 16px;border-radius:8px;display:none;z-index:99}
+</style>
+</head>
+<body>
+<header>
+  <h1>DARK<span>FORCE</span> &nbsp;·&nbsp; dark web threat actor de-anonymization</h1>
+  <nav id="nav">
+    <button data-t="overview" class="active">Overview</button>
+    <button data-t="search">Search</button>
+    <button data-t="actors">Actors</button>
+    <button data-t="graph">Graph</button>
+    <button data-t="infra">Infrastructure</button>
+    <button data-t="stylo">Stylometry</button>
+    <button data-t="timeline">Timeline</button>
+    <button data-t="live">Live Ops</button>
+  </nav>
+</header>
+<main id="view"></main>
+<div id="toast"></div>
+<script>
+const $ = (id)=>document.getElementById(id);
+let ctx = {};
+function toast(m){const t=$('toast');t.textContent=m;t.style.display='block';setTimeout(()=>t.style.display='none',2600);}
+async function api(p,opt){const r=await fetch(p,opt);if(!r.ok)throw new Error((await r.text()).slice(0,200));return r.json();}
+function esc(s){return (s??'').toString().replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
+function sevCls(s){return ['low','medium','high','critical'].includes(s)?s:'medium';}
+
+const navs=[...document.querySelectorAll('#nav button')];
+navs.forEach(b=>b.onclick=()=>{navs.forEach(x=>x.classList.remove('active'));b.classList.add('active');render(b.dataset.t);});
+
+let busy=false;
+async function render(t){
+  busy=true;try{
+  if(t==='overview')await overview();
+  else if(t==='search')search();
+  else if(t==='actors')actors();
+  else if(t==='graph')graph();
+  else if(t==='infra')infra();
+  else if(t==='stylo')styloAll();
+  else if(t==='timeline')timeline();
+  else if(t==='live')live();
+  }catch(e){$('view').innerHTML=`<div class="panel">⚠ ${esc(e.message)}</div>`;}busy=false;
+}
+
+async function overview(){
+  const s=await api('/api/stats');
+  const cards=['actors','handles','identifiers','posts','sites','findings','links']
+    .map(k=>`<div class="card"><b>${s[k]}</b><small> &nbsp;${k}</small></div>`).join('');
+  const sites=await api('/api/misconfigs');
+  const top=sites.slice(0,6).map(f=>`<tr><td><span class="badge ${sevCls(f.severity)}">${esc(f.severity)}</span></td>
+    <td>${esc(f.kind)}</td><td title="${esc(f.detail)}">${esc(f.detail).slice(0,90)}…</td><td><a href="${f.site_url}">${esc(f.site_url)}</a></td><td>${(f.confidence*100).toFixed(0)}%</td></tr>`).join('');
+  $('view').innerHTML=`<div class="panel flex-between"><div>
+      <div>An autonomous OSINT platform: <b class="accent">collect → fingerprint → link → attribute</b>. Live seeds via Tor/clearnet APIs, entity graph in SQLite+link engine, stylometric persona matching, misconfiguration-to-origin scanning.</div>
+      <div class="mt dim">Capability 1: hidden-service misconfig · Capability 2: cross-market identity graph · Capability 3: AI stylometry. All results exportable (CSV/JSON/PDF).</div></div>
+      <a href="/api/export?fmt=pdf&q="><button>PDF report</button></a></div>
+    <div class="cards">${cards}</div>
+    <div class="panel"><h3>Latest infrastructure findings</h3><div class="mt"><table><tr><th>sev</th><th>kind</th><th>detail</th><th>on site</th><th>conf</th></tr>${top||'<tr><td colspan=5 class=dim>none yet — seed demo or scan live</td></tr>'}</table></div></div>`;
+}
+
+function search(){
+  $('view').innerHTML=`<div class="panel grow"><h3>Search</h3><div class="row mt">
+    <input id="sq" placeholder="handle / PGP fingerprint / BTC address / onion / email…" onkeydown="if(event.key==='Enter')doSearch()">
+    <select id="sk"><option value="all">all</option><option value="actor">actors</option><option value="id">identifiers</option><option value="site">sites</option></select>
+    <button onclick="doSearch()">Search</button>
+    <button onclick="exp('json')">JSON</button><button onclick="exp('csv')">CSV</button><button onclick="exp('pdf')">PDF</button>
+    </div><div id="sres" class="mt"></div></div>`;
+}
+async function doSearch(){
+  const q=$('sq').value, k=$('sk').value;ctx.q=q;ctx.k=k;
+  const r=await api(`/api/search?q=${encodeURIComponent(q)}&kind=${k}`);
+  let h=`<h4>${r.actors.length} actors · ${r.identifiers.length} identifiers · ${r.sites.length} sites</h4>`;
+  h+=`<h4 class="mt">Identifiers (${r.identifiers.length})</h4><table><tr><th>kind</th><th>value</th><th>detail</th><th>handle</th><th>actor</th></tr>`
+    +r.identifiers.map(i=>`<tr><td><span class="badge low">${esc(i.kind)}</span></td><td class="accent">${esc(i.value)}</td><td>${esc(i.detail)}</td><td>${esc(i.handle)}</td><td><a href="#" onclick="actorById(${i.actor_id});return false">${esc(i.handle)}</a></td></tr>`).join('')+'</table>';
+  h+=`<h4 class="mt">Actors (${r.actors.length})</h4><table><tr><th>canonical</th><th>category</th><th>confidence</th><th></th></tr>`
+    +r.actors.map(a=>`<tr><td><a href="#" onclick="actorById(${a.id});return false">${esc(a.canon)}</a></td><td>${esc(a.category)}</td><td>${(a.confidence*100).toFixed(0)}%</td><td><button onclick="exp('csv',${a.id})">export</button></td></tr>`).join('')+'</table>';
+  h+=`<h4 class="mt">Sites (${r.sites.length})</h4><table><tr><th>url</th><th>title</th><th>category</th><th>server</th></tr>`
+    +r.sites.map(s=>`<tr><td><a href="${esc(s.url)}">${esc(s.url)}</a></td><td>${esc(s.title)}</td><td>${esc(s.category)}</td><td>${esc(s.server)}</td></tr>`).join('')+'</table>';
+  $('sres').innerHTML=h;
+}
+async function exp(fmt,aid=null){
+  const q=aid?"":($('sq')?$('sq').value:ctx.q||'');
+  window.location=`/api/export?fmt=${fmt}&q=${encodeURIComponent(q)}&kind=all`;
+}
+
+async function actors(){
+  const r=await api('/api/search?q=&kind=actor');
+  $('view').innerHTML=`<div class="panel"><h3>Actors (${r.actors.length})</h3><table class="mt"><tr><th>canonical</th><th>category</th><th>confidence</th><th>risk</th><th>first/last seen</th></tr>
+    ${r.actors.map(a=>`<tr><td><a href="#" onclick="actorById(${a.id});return false">${esc(a.canon)}</a></td><td>${esc(a.category)}</td><td>${(a.confidence*100).toFixed(0)}%</td><td>${esc(a.risk)}</td><td>${esc(a.first_seen)} → ${esc(a.last_seen)}</td></tr>`).join('')}</table></div><div id="aprof"></div>`;
+}
+async function actorById(id){
+  const a=await api('/api/actor/'+id);
+  const ids=a.identifiers.map(i=>`<span class="tag">${esc(i.kind)}: ${esc(i.value)}<br><small class="dim">${esc(i.detail)}</small></span>`).join('');
+  const hs=a.handles.map(h=>`<tr><td>${esc(h.handle)}</td><td>${esc(h.role)}</td><td>${esc(h.trust_level)}</td><td>${esc(h.joined)}</td><td><a href="${esc(h.site_url)}">${esc(h.site_url)}</a></td></tr>`).join('');
+  const fs=[...new Map(a.findings.map(f=>[f.kind,f])).values()].map(f=>`<tr><td><span class="badge ${sevCls(f.severity)}">${esc(f.severity)}</span></td><td>${esc(f.kind)}</td><td>${esc(f.detail)}</td><td>${(f.confidence*100).toFixed(0)}%</td></tr>`).join('');
+  const st=(a.stylo||[]).map(s=>`<tr><td>${esc(s.handle)}</td><td class="accent">${(s.score*100).toFixed(0)}%</td><td>${(s.evidence||[]).map(e=>`<span class="tag">${esc(e.feature)}</span>`).join('')}</td></tr>`).join('');
+  document.getElementById('aprof').innerHTML=`<div class="grid2">
+    <div><div class="panel"><div class="flex-between"><h3>${esc(a.canon)} <span class="badge ${sevCls('high')}">conf ${(a.confidence*100).toFixed(0)}%</span></h3>
+      <span><button onclick="exp('csv')">CSV</button> <button onclick="exp('pdf')">PDF</button></span></div>
+      <div class="dim">${esc(a.category)} · risk ${esc(a.risk)}</div>
+      <h4 class="mt">Identifiers</h4><div>${ids||'<span class="dim">none</span>'}</div>
+      <h4 class="mt">Handles / profiles (${a.handles.length})</h4><table><tr><th>handle</th><th>role</th><th>trust</th><th>joined</th><th>site</th></tr>${hs}</table>
+      <h4 class="mt">Infrastructure findings</h4><table><tr><th>sev</th><th>kind</th><th>detail</th><th>conf</th></tr>${fs||'<tr><td colspan=4 class=dim>none</td></tr>'}</table>
+    </div></div>
+    <div><div class="panel"><h3>Stylometric persona matches</h3><table class="mt"><tr><th>handle</th><th>score</th><th>top features</th></tr>${st||'<tr><td colspan=3 class=dim>no corpus for this actor</td></tr>'}</table>
+      <div class="mt"><button onclick="drawGraph(${id})">Open relationship graph</button></div></div></div></div>`;
+}
+async function graph(){
+  const r=await api('/api/search?q=&kind=actor');
+  $('view').innerHTML=`<div class="panel flex-between"><h3>Relationship graph</h3>
+    <span><select id="gsel"><option value="0">whole network</option>${r.actors.map(a=>`<option value="${a.id}">${esc(a.canon)}</option>`).join('')}</select>
+    <button onclick="drawGraph(+$('gsel').value)">Render</button></span></div>
+    <div class="panel"><div id="cy"></div></div>`;
+  drawGraph(0);
+}
+function drawGraph(aid){
+  if(!$('cy')){document.getElementById('aprof').innerHTML='<div class="panel"><div id="cy"></div></div>';}
+  api('/api/graph?actor_id='+aid).then(g=>{
+    if(window._cy)window._cy.destroy();
+    const cols={actor:'#3ddad7',handle:'#7aa5ff',btc:'#f0b429',pgp:'#f25c5c',email:'#9a76ff',xmr:'#ff9a3c',onion:'#5ad1a5',telegram:'#55acee',icq:'#c77dff',site:'#8a93a6'};
+    const el=document.getElementById('cy');
+    window._cy=window.cytoscape({container:el,
+      elements:g.nodes.map(n=>({data:{id:n.id,label:n.label,kind:n.kind},classes:n.kind})).concat(
+        g.edges.map(e=>({data:{id:e.s+'__'+e.t,source:e.s,target:e.t,label:e.e}}))),
+      style:[
+        {selector:'node',style:{'background-color':n=>cols[n.classes]||cols[n.data('kind')]||'#666',
+          'label':'data(label)','color':'#dbe4f5','font-size':'9px','text-wrap':'wrap','text-max-width':'150px','width':31,'height':31}},
+        {selector:'edge',style:{'width':2,'line-color':'#33507a','target-arrow-color':'#33507a','target-arrow-shape':'triangle','curve-style':'bezier','label':'data(label)','font-size':'7px','color':'#7d8db0'}},
+        {selector:'.actor',style:{'width':48,'height':48,'border-width':2,'border-color':'#3ddad7'}}
+      ],
+      layout:{name:'cose',animate:true,padding:30}});
+    window._cy.on('tap','node',e=>{const n=e.target;if(n.id().startsWith('actor:')){actorByIdLink(n.id().slice(6));}});
+  }).catch(e=>toast(e.message));
+}
+function actorByIdLink(canon){
+  api('/api/search?q='+encodeURIComponent(canon)+'&kind=actor').then(r=>{if(r.actors.length)actorById(r.actors[0].id);else toast('actor not found');});
+}
+async function infra(){
+  const r=await api('/api/misconfigs');
+  const byK={};r.forEach(f=>byK[f.severity]=(byK[f.severity]||0)+1);
+  const cards=Object.entries(byK).map(([k,v])=>`<div class="card"><b>${v}</b><small> &nbsp;${k}</small></div>`).join('')||'';
+  const rows=r.map(f=>`<tr><td><span class="badge ${sevCls(f.severity)}">${esc(f.severity)}</span></td><td>${esc(f.kind)}</td><td>${esc(f.detail)}</td><td><a href="${esc(f.site_url)}">${esc(f.site_url)}</a></td><td>${(f.confidence*100).toFixed(0)}%</td></tr>`).join('');
+  $('view').innerHTML=`<div class="panel"><h3>Misconfiguration & origin-server findings (Capability 1)</h3>
+    <div class="cards">${cards}</div>
+    <div class="row"><input id="fsev" placeholder="filter: critical/high/medium/low" style="max-width:220px"><button onclick="infra()">raw</button><button onclick="window.open('/api/export?fmt=pdf&q=','_blank')">PDF</button></div>
+    <table class="mt"><tr><th>sev</th><th>kind</th><th>detail</th><th>site</th><th>conf</th></tr>${rows}</table></div>`;
+}
+async function styloAll(){
+  const r=await api('/api/stylo');
+  const rows=Object.entries(r).flatMap(([h,ms])=>ms.slice(0,2).map(m=>`<tr><td>${esc(h)}</td><td>${esc(m.handle)}</td><td class="accent">${(m.score*100).toFixed(0)}%</td><td>${(m.evidence||[]).slice(0,3).map(e=>`<span class="tag">${esc(e.feature)}</span>`).join('')}</td></tr>`)).join('');
+  $('view').innerHTML=`<div class="panel"><h3>Stylometric persona linkage (Capability 3)</h3>
+    <p class="dim mt">Character n-gram authorship profiles over each handle's post corpus; cosine similarity with feature-level explainability.</p>
+    <table class="mt"><tr><th>handle</th><th>similar to</th><th>score</th><th>top features</th></tr>${rows||'<tr><td colspan=4 class=dim>no corpora yet — seed demo data</td></tr>'}</table>
+    <div class="row mt"><button onclick="refresh()">Rebuild graph + merge (run</button>)</div></div>`;
+}
+async function refresh(){toast('running stylometry + entity merging…');const r=await api('/api/refresh',{method:'POST'});toast(`merged: ${r.groups||0} groups, ${r.reassigned} handles reassigned`);render('stylo');}
+async function timeline(){
+  const ev=await api('/api/timeline');
+  const rows=ev.slice(0,80).map(e=>`<tr><td class="dim">${esc(e.ts)}</td><td class="accent">${esc(e.etype)}</td><td>${esc(e.handle||'')}</td><td>${esc(e.title||'').slice(0,120)}</td><td><a href="${esc(e.url)}">${esc(e.url||'')}</a></td></tr>`).join('');
+  $('view').innerHTML=`<div class="panel"><h3>Activity timeline</h3><div class="row mt"><input id="ts" placeholder="start ISO e.g. 2025-01-01" style="max-width:200px"><input id="te" placeholder="end ISO" style="max-width:200px"><button onclick="tl()">apply</button></div>
+    <table class="mt"><tr><th>time (UTC)</th><th>event</th><th>handle</th><th>title/detail</th><th>source</th></tr>${rows||'<tr><td colspan=5 class=dim>no events</td></tr>'}</table></div>`;
+}
+async function tl(){const s=$('ts').value,e=$('te').value;const ev=await api(`/api/timeline?start=${encodeURIComponent(s)}&end=${encodeURIComponent(e)}`);
+  document.querySelector('#view table').innerHTML=ev.slice(0,80).map(x=>`<tr><td>${esc(x.ts)}</td><td>${esc(x.etype)}</td><td>${esc(x.handle||'')}</td><td>${esc(x.title||'').slice(0,120)}</td><td><a href="${esc(x.url||'')}">${esc(x.url||'')}</a></td></tr>`).join('');}
+function live(){
+  $('view').innerHTML=`<div class="grid2">
+   <div class="panel"><h3>Live misconfiguration scan</h3>
+     <div class="row mt"><input id="lurl" placeholder="http://xxxxxx.onion or https://target.com …"><input id="ltor" type="checkbox" style="width:auto"> route via Tor</div>
+     <button onclick="scan()">Scan</button><div id="lres" class="mt"></div></div>
+   <div class="panel"><h3>Autonomous seed collection</h3>
+     <p class="dim">Pull onions/sites from clearnet APIs (Ahmia, dark.fail, ransomware.live) without touching Tor.</p>
+     <div class="row mt"><select id="csrc"><option value="directory">Directory (dark.fail verified)</option><option value="ahmia">Ahmia search API</option><option value="darkfail">dark.fail scrape</option><option value="ransomware">ransomware.live</option></select>
+     <button onclick="collect()">Collect</button></div><div id="cres" class="mt"></div></div></div>`;
+}
+async function scan(){
+  toast('scanning…');try{
+    const r=await api('/api/scan',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({url:$('lurl').value,use_tor:!!$('ltor').checked})});
+    $('lres').innerHTML=`<table><tr><th>sev</th><th>kind</th><th>detail</th><th>conf</th></tr>${r.findings.map(f=>`<tr><td><span class="badge ${sevCls(f.severity)}">${esc(f.severity)}</span></td><td>${esc(f.kind)}</td><td>${esc(f.detail)}</td><td>${(f.confidence*100).toFixed(0)}%</td></tr>`).join('')||'<tr><td colspan=4 class=dim>no findings</td></tr>'}</table>`;
+  }catch(e){$('lres').innerHTML=`<div class="crit">${esc(e.message)}</div>`;}
+}
+async function collect(){
+  const src=$('csrc').value;toast('collecting seeds…');
+  const r=await api('/api/collect',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({source:src})});
+  $('cres').innerHTML=`<div class="accent">Collected ${r.collected} new sites into the database.</div>`;
+  toast(`+${r.collected} sites`);
+}
+</script>
+</body>
+</html>
