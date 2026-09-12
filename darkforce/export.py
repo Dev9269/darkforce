@@ -12,7 +12,12 @@ def to_csv(records):
     if not records:
         return ""
     buf = io.StringIO()
-    w = csv.DictWriter(buf, fieldnames=list(records[0].keys()))
+    fieldnames = []
+    for r in records:
+        for k in r:
+            if k not in fieldnames:
+                fieldnames.append(k)
+    w = csv.DictWriter(buf, fieldnames=fieldnames, extrasaction="ignore")
     w.writeheader()
     for r in records:
         w.writerow({k: ("" if v is None else str(v)) for k, v in r.items()})
@@ -33,6 +38,10 @@ def to_pdf(records, title="Dark Force report"):
     flow = [Paragraph(title, h1), Spacer(1, 8)]
 
     def esc(x):
+        if isinstance(x, bool):
+            x = "true" if x else "false"
+        elif x is not None:
+            x = str(x)
         return (x or "").replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
 
     if records:

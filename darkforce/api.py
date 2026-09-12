@@ -1,18 +1,25 @@
 import os
+import uuid
+from typing import Optional
 
-from fastapi import FastAPI, HTTPException
+from fastapi import BackgroundTasks, FastAPI, HTTPException
 from fastapi.responses import FileResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from . import detect, link, net, seeds, stylo
+from .collect import crawl_and_ingest
+from .config import tor_available
 from .db import DB
 from .export import export as export_resp
+from .tor import active_proxy
 
-WEB_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "web")
+WEB_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "web")
 
 db = DB()
 app = FastAPI(title="DarkForce - Dark Web Threat Actor De-anonymization")
+
+COLLECT_JOBS = {}
 
 
 class SearchReq(BaseModel):
@@ -27,6 +34,7 @@ class ScanReq(BaseModel):
 
 class CollectReq(BaseModel):
     source: str = "directory"
+    use_tor: Optional[bool] = None
 
 
 @app.get("/api/stats")
@@ -108,17 +116,65 @@ def scan(req: ScanReq):
     return {"site_id": sid, "fingerprint": {k: v for k, v in fp.items() if v}, "findings": rows}
 
 
+def _collect_job(job_id, source, want_tor):
+    COLLECT_JOBS[job_id]["status"] = "collecting"
+    try:
+        from urllib.parse import urlparse
+
+        import time as _t
+
+        if want_tor:
+            use_tor = active_proxy() is not None  # may bootstrap bundled Tor (waits up to 90s)
+        else:
+            use_tor = False
+        COLLECT_JOBS[job_id]["use_tor"] = use_tor
+        items = seeds.collect_source(source)
+        new_urls = []
+        for it in items:
+            url = it["url"]
+            if not url or db.site_id(url):
+                continue
+            db.upsert_site(url, title=it.get("title", "")[:200], category=it.get("category", "seed"))
+            new_urls.append(url)
+            if len(new_urls) >= (COLLECT_JOBS[job_id].get("cap") or 30):
+                break
+        if not use_tor:
+            new_urls = [u for u in new_urls if ".onion" not in (urlparse(u).hostname or "")]
+        COLLECT_JOBS[job_id]["sites_collected"] = len(new_urls)
+        for i, url in enumerate(new_urls, 1):
+            if COLLECT_JOBS[job_id].get("cancel"):
+                break
+            r = crawl_and_ingest(db, url, use_tor=use_tor)
+            COLLECT_JOBS[job_id]["crawled"].append({"url": url, **r})
+            COLLECT_JOBS[job_id]["progress"] = {"done": i, "total": len(new_urls)}
+            _t.sleep(1.0)
+        prof, pairs, per = stylo.match_all(db)
+        COLLECT_JOBS[job_id]["merge"] = link.rebuild_actors(db, stylo_pairs=pairs)
+        COLLECT_JOBS[job_id]["status"] = "done"
+    except Exception as e:
+        COLLECT_JOBS[job_id]["status"] = "error"
+        COLLECT_JOBS[job_id]["error"] = str(e)
+
+
 @app.post("/api/collect")
-def collect(req: CollectReq):
-    items = seeds.collect_source(req.source)
-    n = 0
-    for it in items:
-        url = it["url"]
-        if not url or db.site_id(url):
-            continue
-        db.upsert_site(url, title=it.get("title", "")[:200], category=it.get("category", "seed"))
-        n += 1
-    return {"source": req.source, "collected": n}
+def collect(req: CollectReq, background: BackgroundTasks):
+    want_tor = req.use_tor if req.use_tor is not None else True  # auto: try Tor, fall back to clearnet
+    job_id = uuid.uuid4().hex[:12]
+    COLLECT_JOBS[job_id] = {"status": "queued", "source": req.source, "use_tor": want_tor,
+                            "sites_collected": 0, "crawled": [], "progress": None,
+                            "merge": None, "error": None}
+    background.add_task(_collect_job, job_id, req.source, want_tor)
+    return {"job_id": job_id, "status": "queued", "source": req.source, "use_tor": want_tor,
+            "message": f"Collection started in background (job {job_id}); "
+                       f"poll /api/collect/status/{job_id} for progress"}
+
+
+@app.get("/api/collect/status/{job_id}")
+def collect_status(job_id: str):
+    job = COLLECT_JOBS.get(job_id)
+    if not job:
+        raise HTTPException(404, "collect job not found")
+    return {**job, "id": job_id}
 
 
 @app.get("/api/export")

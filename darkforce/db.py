@@ -165,6 +165,7 @@ class DB:
 
     # ---------- queries ----------
     def stats(self):
+        sources = [dict(r) for r in self.q("SELECT name, type, url FROM sources ORDER BY name")]
         return {
             "actors": self.one("SELECT COUNT(*) c FROM actors")["c"],
             "handles": self.one("SELECT COUNT(*) c FROM handles")["c"],
@@ -173,6 +174,9 @@ class DB:
             "sites": self.one("SELECT COUNT(*) c FROM sites")["c"],
             "findings": self.one("SELECT COUNT(*) c FROM findings")["c"],
             "links": self.one("SELECT COUNT(*) c FROM links")["c"],
+            "sources": [s["name"] for s in sources],
+            "source_status": "SEEDED" if sources else "EMPTY",
+            "source": sources[0]["name"] if sources else "",
         }
 
     def search(self, q, kind="all", start=None, end=None):

@@ -108,9 +108,12 @@ def _mkposts(handle, n, site_id, url_base, start_day):
 
 
 def ingest(db):
-    for t in ("sites", "actors", "handles", "posts", "identifiers", "findings", "links"):
+    for t in ("sites", "actors", "handles", "posts", "identifiers", "findings", "links", "sources"):
         db.exe(f"DELETE FROM {t}")
     db.conn.commit()
+
+    db.upsert_source("demo/onion-corpus", "bundle", "fixtures://onion", "bundled demo onion sites")
+    db.upsert_source("demo/clearnet-index", "web", "fixtures://clearnet", "clearnet fingerprint corpus")
 
     # seed market/forum sites
     def site(url, title, cat, **kw):

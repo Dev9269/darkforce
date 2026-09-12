@@ -24,10 +24,10 @@ ONION_DIRECTORY = [
 ]
 
 
-def _get(url, proxies=None, timeout=15, headers=None):
+def _get(url, params=None, proxies=None, timeout=15, headers=None):
     try:
-        return requests.get(url, proxies=proxies, headers=headers or {"User-Agent": "Mozilla/5.0"},
-                            timeout=timeout)
+        return requests.get(url, params=params, proxies=proxies,
+                            headers=headers or {"User-Agent": "Mozilla/5.0"}, timeout=timeout)
     except Exception:
         return None
 
@@ -35,15 +35,17 @@ def _get(url, proxies=None, timeout=15, headers=None):
 def collect_ahmia(queries=("market vendor", "dump", "database", "combo list")):
     out = []
     for q in queries:
-        r = _get("https://ahmia.fi/api/search/", params={"q": q})
+        r = _get("https://ahmia.fi/search/", params={"q": q})
         if not r or r.status_code != 200:
             continue
         try:
-            for item in r.json() if isinstance(r.json(), list) else r.json().get("results", []):
-                url = item.get("url") or item.get("location", "")
+            soup = BeautifulSoup(r.text, "html.parser")
+            for a in soup.select("li.result a[href]"):
+                url = a.get("href", "")
                 if ".onion" in url:
-                    out.append({"title": item.get("title", "")[:200], "url": url,
-                                "category": item.get("description", "")[:200]})
+                    link = ("https://ahmia.fi" + url) if url.startswith("/") else url
+                    out.append({"title": a.get_text(" ", strip=True)[:200],
+                                "url": link, "category": "search"})
         except Exception:
             pass
         time.sleep(0.5)
@@ -71,21 +73,28 @@ def collect_darkfail():
 
 
 def collect_ransomware(api_key=""):
+    """Leak-site candidates from ransomware.live (clearnet homepage -> onion leak sites when present)."""
     out = []
     h = {"User-Agent": "Mozilla/5.0"}
     if api_key:
         h["X-API-KEY"] = api_key
-    r = _get("https://api.ransomware.live/v2/recentvictims", headers=h)
+    r = _get("https://www.ransomware.live/", headers=h)
     if not r or r.status_code != 200:
         return out
-    for v in r.json()[:50]:
-        group = v.get("group", "unknown")
-        out.append({
-            "title": f"Victim: {v.get('victim', '')} ({group})",
-            "url": v.get("leak_site") or v.get("url", ""),
-            "category": group,
-        })
-    return out
+    seen = set()
+    for v in ONION_V3.finditer(r.text):
+        u = v.group(0).lower()
+        if u not in seen:
+            seen.add(u)
+            out.append({"title": "ransomware.live listed", "url": "http://" + u, "category": "ransom"})
+    return out[:50]
+
+
+CLEARNET_INDEX = [
+    ("Ransomware.live clearnet index", "https://www.ransomware.live/", "ransom"),
+    ("Ahmia clearnet index", "https://ahmia.fi/", "search"),
+    ("Dark.fail clearnet status", "https://dark.fail/", "directory"),
+]
 
 
 def collect_source(name):
@@ -98,6 +107,8 @@ def collect_source(name):
         return collect_ransomware()
     if name == "directory":
         return [{"title": t, "url": "http://" + o, "category": c} for t, o, c in ONION_DIRECTORY]
+    if name == "clearnet":
+        return [{"title": t, "url": u, "category": c} for t, u, c in CLEARNET_INDEX]
     return []
 
 
