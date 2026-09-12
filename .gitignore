@@ -19,4 +19,6 @@ frontend/dist/
 vendor/tor/tor-expert-bundle.tar.gz
 vendor/tor/data/
 vendor/tor/docs/
-vendor/tor/tor/pluggable_transports/
+vendor/tor/tor/pluggable_transports/data/pg/
+data/pg.log
+data/tor-managed.log
