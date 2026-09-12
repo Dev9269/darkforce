@@ -8,3 +8,4 @@ stem>=1.8
 psycopg2-binary>=2.9
 pyvis>=0.3
 pytest>=8.0
+telethon>=1.35
