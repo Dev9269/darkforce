@@ -205,8 +205,11 @@ def test_auth_and_audit(sqlite_db):
 
 
 # ---------- telegram guard + pdf report ----------
-def test_telegram_guard_requires_env():
+def test_telegram_guard_requires_env(monkeypatch):
     from darkforce.seeds import collect_telegram
+    monkeypatch.delenv("TG_API_ID", raising=False)
+    monkeypatch.delenv("TG_API_HASH", raising=False)
+    monkeypatch.delenv("TG_CHANNELS", raising=False)
     assert collect_telegram(channels="@somechannel") == []  # no TG_API_ID/HASH -> no-op
 
 

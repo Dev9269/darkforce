@@ -125,6 +125,16 @@ def search(q: str = "", kind: str = "all"):
     return db.search(q, kind)
 
 
+@app.get("/api/identifiers")
+def identifiers():
+    return db.all_identifiers()
+
+
+@app.get("/api/actors")
+def actors_all():
+    return db.all_actors()
+
+
 @app.get("/api/actor/{aid}")
 def actor(aid: int):
     a = db.actor_summary(aid)
@@ -193,6 +203,45 @@ def misconfigs(severity: str = ""):
     if severity:
         rows = [r for r in rows if r["severity"] == severity]
     return [dict(r) for r in rows]
+
+
+# heuristic purpose tags for the site-inventory card. Ordered: first match wins.
+PURPOSE_RULES = [
+    ("hitman / for-hire", ("hitman", "contract kill", "assassination", "murder for hire", "kill order")),
+    ("weapons / guns", ("glock", "beretta", "cz ", "ak-47", "ak47", "ar-15", "rifles", "pistol", "smg", "ammunition", "guns", "weapons", "firearm")),
+    ("drugs", ("cocaine", "heroin", "mdma", "ecstasy", "meth", "lsd", "fentanyl", "weed", "cannabis", "marijuana", "xanax", "adderall", "dmt", "ketamine", "psychedel")),
+    ("stolen data / dumps", ("dump", "cc ", " card ", "carding", "track", "pin", "bins", "leaked", "combo list", "database", "breach", "swipe")),
+    ("fraud / money laundering", ("fraud", "launder", "crypto tumbl", "money mule", "paypal", "verification", "fake id", "passport", "identity")),
+    ("hacking services", ("ddos", "ransomware", "malware", "exploit", "botnet", "hack", "crack", "spyware", "keylogger", "phishing", "zeroday", "0day")),
+    ("mail spam / enclave", ("spam", "smtp", "sendgrid", "bulk mail", "mailer", "newsletter")),
+    ("forums / discussion", ("forum", "thread", "post reply", "member", "rules", "profile", "signature")),
+    ("marketplace", ("market", "shop", "store", "vendor", "escrow", "review", "buy", "sell", "listed")),
+    ("news / media", ("news", "report", "headline", "press", "journalist", "article", "breaking")),
+    ("search engine", ("search", "index", "crawler", "query")),
+    ("directory / listings", ("directory", "verified", "list", "status", "uptime")),
+]
+
+DEFAULT_PURPOSE = "unknown / uncategorised"
+
+
+def _site_purpose(row):
+    text = (row.get("title") or "") + " " + (row.get("digest") or "") + " " + (row.get("category") or "")
+    low = text.lower()
+    for label, kws in PURPOSE_RULES:
+        for k in kws:
+            if k in low:
+                return label
+    return DEFAULT_PURPOSE
+
+
+@app.get("/api/sites")
+def sites_all():
+    out = []
+    for r in db.sites_all():
+        r["purpose"] = _site_purpose(r)
+        r.pop("digest", None)
+        out.append(r)
+    return out
 
 
 @app.get("/api/stylo/{handle}")

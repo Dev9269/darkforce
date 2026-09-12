@@ -23,6 +23,7 @@ export interface Actor {
   bio?: string;
   risk?: string;
   handles?: Handle[];
+  n_handles?: number;
   n_posts?: number;
   findings?: Finding[];
   stylo?: StyloResult[];
@@ -158,6 +159,9 @@ export interface OperationResponse {
 }
 
 export const getStats = () => apiGet<Stats>("/stats");
+export const getSites = () => apiGet<JsonRecord[]>("/sites");
+export const getIdentifiers = () => apiGet<Identifier[]>("/identifiers");
+export const getActors = () => apiGet<Actor[]>("/actors");
 export const getSearch = (q: string, kind: string) =>
   apiGet<{ actors?: Actor[]; identifiers?: Identifier[]; sites?: JsonRecord[] }>(
     `/search?q=${encodeURIComponent(q)}&kind=${encodeURIComponent(kind)}`,

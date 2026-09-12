@@ -337,6 +337,19 @@ class BaseDB:
         return [dict(r) for r in self.q(
             "SELECT * FROM identifiers WHERE actor_id=? ORDER BY kind", (actor_id,))]
 
+    def all_identifiers(self):
+        """Every identifier joined to its actor canonical name, newest first."""
+        return [dict(r) for r in self.q(
+            "SELECT i.*, a.canon actor_canon FROM identifiers i "
+            "LEFT JOIN actors a ON a.id=i.actor_id ORDER BY i.last_seen DESC, i.id DESC")]
+
+    def all_actors(self):
+        """Every actor with handle count + post count, by confidence."""
+        return [dict(r) for r in self.q(
+            "SELECT a.*, (SELECT COUNT(*) FROM handles h WHERE h.actor_id=a.id) n_handles, "
+            "       (SELECT COUNT(*) FROM posts p JOIN handles h ON h.handle=p.handle AND h.actor_id=a.id) n_posts "
+            "FROM actors a ORDER BY a.confidence DESC, a.id DESC")]
+
     def handles_for_actor(self, actor_id):
         return [dict(r) for r in self.q(
             "SELECT h.*, s.url site_url, s.category FROM handles h LEFT JOIN sites s ON h.site_id=s.id "
@@ -487,6 +500,22 @@ class BaseDB:
         """Sources whose last fetch succeeded (usable for autonomous polling)."""
         return [r["source"] for r in self.q(
             "SELECT source FROM collector_health WHERE last_success IS NOT NULL")]
+
+    def sites_all(self):
+        """Every site with its post count and a body-text digest for purpose
+        classification. `digest` is truncated; enough for keyword tagging."""
+        rows = [dict(r) for r in self.q(
+            "SELECT s.id, s.url, s.title, s.category, s.server, s.status, s.first_seen, s.last_scan, "
+            "       COUNT(p.id) AS post_count "
+            "FROM sites s LEFT JOIN posts p ON p.site_id = s.id "
+            "GROUP BY s.id ORDER BY s.last_scan DESC, s.id DESC")]
+        for r in rows:
+            r["digest"] = ""
+            texts = [dict(x) for x in self.q(
+                "SELECT body FROM posts WHERE site_id = ? ORDER BY id DESC LIMIT 8", (r["id"],))]
+            if texts:
+                r["digest"] = " ".join((t["body"] or "") for t in texts)[:4000]
+        return rows
 
     # ---------- RBAC: users + audit log ----------
     def get_user(self, username):

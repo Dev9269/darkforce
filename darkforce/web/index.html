@@ -20,19 +20,21 @@ main{padding:20px;max-width:1400px;margin:0 auto}
 .card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:14px}
 .card b{font-size:24px;color:var(--acc)}
 .card small{color:var(--dim)}
+.card.clickable{cursor:pointer;transition:border-color .15s}
+.card.clickable:hover{border-color:var(--acc);background:rgba(61,218,215,.05)}
 input,select,button{background:var(--panel2);border:1px solid var(--line);color:var(--fg);padding:8px 12px;border-radius:6px;font-size:13px}
 input{width:100%}
 .grow input{max-width:520px}
-table{width:100%;border-collapse:collapse;font-size:13px}
+table{width:100%;border-collapse:collapse;font-size:13px;table-layout:fixed}
 th{color:var(--dim);text-align:left;padding:8px;border-bottom:1px solid var(--line);font-weight:600;font-size:11px;text-transform:uppercase;letter-spacing:.5px}
-td{padding:8px;border-bottom:1px solid var(--panel2)}
+td{padding:8px;border-bottom:1px solid var(--panel2);word-break:break-word;overflow-wrap:anywhere}
 tr:hover td{background:rgba(61,218,215,.06)}
 .badge{padding:2px 8px;border-radius:10px;font-size:11px;font-weight:600}
 .badge.medium{background:rgba(240,180,41,.15);color:var(--warn)}
 .badge.high,.badge.critical{background:rgba(242,92,92,.15);color:var(--crit)}
 .badge.low{background:rgba(61,218,215,.12);color:var(--acc)}
-.tag{display:inline-block;background:var(--panel2);border:1px solid var(--line);border-radius:14px;padding:1px 10px;margin:2px 3px 2px 0;font-size:12px}
-a{color:var(--acc);text-decoration:none;word-break:break-all}
+.tag{display:inline-block;background:var(--panel2);border:1px solid var(--line);border-radius:14px;padding:1px 10px;margin:2px 3px 2px 0;font-size:12px;max-width:100%;word-break:break-all}
+a{color:var(--acc);text-decoration:none;word-break:break-all;overflow-wrap:anywhere}
 .accent{color:var(--acc)}.dim{color:var(--dim)}
 .grid2{display:grid;grid-template-columns:2fr 1fr;gap:16px}
 @media(max-width:900px){.grid2{grid-template-columns:1fr}}
@@ -50,6 +52,7 @@ a{color:var(--acc);text-decoration:none;word-break:break-all}
     <button data-t="overview" class="active">Overview</button>
     <button data-t="search">Search</button>
     <button data-t="actors">Actors</button>
+    <button data-t="sites">Sites</button>
     <button data-t="graph">Graph</button>
     <button data-t="infra">Infrastructure</button>
     <button data-t="stylo">Stylometry</button>
@@ -62,8 +65,10 @@ a{color:var(--acc);text-decoration:none;word-break:break-all}
 <script>
 const $ = (id)=>document.getElementById(id);
 let ctx = {};
-function toast(m){const t=$('toast');t.textContent=m;t.style.display='block';setTimeout(()=>t.style.display='none',2600);}
-async function api(p,opt){const r=await fetch(p,opt);if(!r.ok)throw new Error((await r.text()).slice(0,200));return r.json();}
+function _esc_api(o){return o;} function toast(m){const t=$('toast');t.textContent=m;t.style.display='block';setTimeout(()=>t.style.display='none',2600);}
+let TOKEN='';
+async function _login(){const r=await fetch('/api/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({username:'admin',password:'admin'})});if(!r.ok)return false;TOKEN=(await r.json()).token||'';return !!TOKEN;}
+async function api(p,opt){if(!opt)opt={};if(!TOKEN)await _login();if(TOKEN)opt.headers=Object.assign({},opt.headers||{},{'Authorization':'Bearer '+TOKEN});const r=await fetch(p,opt);if(!r.ok)throw new Error((await r.text()).slice(0,200));return r.json();}
 function esc(s){return (s??'').toString().replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
 function sevCls(s){return ['low','medium','high','critical'].includes(s)?s:'medium';}
 
@@ -76,6 +81,9 @@ async function render(t){
   if(t==='overview')await overview();
   else if(t==='search')search();
   else if(t==='actors')actors();
+  else if(t==='sites')sites();
+  else if(t==='identities')identities();
+  else if(t==='findings')findings();
   else if(t==='graph')graph();
   else if(t==='infra')infra();
   else if(t==='stylo')styloAll();
@@ -86,8 +94,12 @@ async function render(t){
 
 async function overview(){
   const s=await api('/api/stats');
-  const cards=['actors','handles','identifiers','posts','sites','findings','links']
-    .map(k=>`<div class="card"><b>${s[k]}</b><small> &nbsp;${k}</small></div>`).join('');
+  const cardView={actors:'actors',handles:'actors',identifiers:'identities',posts:'timeline',sites:'sites',findings:'findings',links:'graph'};
+  const cards=Object.keys(cardView)
+    .map(k=>`<div class="card clickable" onclick="render('${cardView[k]}')"><b>${s[k]}</b><small> &nbsp;${k}</small></div>`).join('');
+
+  const purposeBadge=p=>`<span class="badge ${['drugs','weapons / guns','hitman / for-hire'].includes(p)?'high':'low'}">${esc(p)}</span>`;
+  const sitesCards=`<div class="panel"><h3>Site inventory — what each site does</h3><div class="mt"><table><tr><th>purpose</th><th>site</th><th>title</th><th>server</th></tr>${(await api('/api/sites')).slice(0,6).map(x=>`<tr><td>${purposeBadge(x.purpose)}</td><td><a href="${esc(x.url)}">${esc(x.url).slice(0,60)}</a></td><td>${esc(x.title||'').slice(0,40)}</td><td>${esc(x.server||'')}</td></tr>`).join('')}</table></div></div>`;
   const sites=await api('/api/misconfigs');
   const top=sites.slice(0,6).map(f=>`<tr><td><span class="badge ${sevCls(f.severity)}">${esc(f.severity)}</span></td>
     <td>${esc(f.kind)}</td><td title="${esc(f.detail)}">${esc(f.detail).slice(0,90)}…</td><td><a href="${f.site_url}">${esc(f.site_url)}</a></td><td>${(f.confidence*100).toFixed(0)}%</td></tr>`).join('');
@@ -146,6 +158,30 @@ async function actorById(id){
     <div><div class="panel"><h3>Stylometric persona matches</h3><table class="mt"><tr><th>handle</th><th>score</th><th>top features</th></tr>${st||'<tr><td colspan=3 class=dim>no corpus for this actor</td></tr>'}</table>
       <div class="mt"><button onclick="drawGraph(${id})">Open relationship graph</button></div></div></div></div>`;
 }
+async function sites(){
+  const r=await api('/api/sites');
+  const purposeBadge=p=>`<span class="badge ${['drugs','weapons / guns','hitman / for-hire'].includes(p)?'high':'low'}">${esc(p)}</span>`;
+  const rows=r.map(s=>`<tr><td>${purposeBadge(s.purpose)}</td><td><a href="${esc(s.url)}">${esc(s.url)}</a></td><td>${esc(s.title||'')}</td><td>${esc(s.server||'')}</td><td>${esc(s.category||'')}</td><td>${s.post_count||0}</td></tr>`).join('');
+  $('view').innerHTML=`<div class="panel"><h3>All sites (${r.length}) — what each one does</h3>
+    <p class="dim mt">Purpose is auto-classified from the site's collected content (title + post text). Click a URL to visit it directly.</p>
+    <table class="mt"><tr><th>purpose</th><th>url</th><th>title</th><th>server</th><th>category</th><th>posts</th></tr>${rows||'<tr><td colspan=6 class=dim>no sites — run Collection or the demo</td></tr>'}</table></div>`;
+}
+async function identities(){
+  const r=await api('/api/identifiers');
+  const rows=r.map(i=>`<tr><td><span class="badge low">${esc(i.kind)}</span></td><td class="accent">${esc(i.value)}</td><td>${esc(i.detail||'')}</td><td><a href="#" onclick="actorByIdLink('${esc(i.actor_canon||'')}');return false">${esc(i.actor_canon||'unattributed')}</a></td><td>${esc(i.url||'')}</td></tr>`).join('');
+  $('view').innerHTML=`<div class="panel"><h3>All identities (${r.length})</h3>
+    <p class="dim mt">PGP fingerprints, BTC/XMR wallets, emails, onion addresses and other identifiers extracted from posts/handles, linked to their attributed actor.</p>
+    <table class="mt"><tr><th>kind</th><th>value</th><th>detail</th><th>actor</th><th>source</th></tr>${rows||'<tr><td colspan=5 class=dim>no identifiers yet</td></tr>'}</table></div>`;
+}
+async function findings(){
+  const r=await api('/api/misconfigs');
+  const byK={};r.forEach(f=>byK[f.severity]=(byK[f.severity]||0)+1);
+  const cards=Object.entries(byK).map(([k,v])=>`<div class="card"><b>${v}</b><small> &nbsp;${k}</small></div>`).join('')||'';
+  const rows=r.map(f=>`<tr><td><span class="badge ${sevCls(f.severity)}">${esc(f.severity)}</span></td><td>${esc(f.kind)}</td><td>${esc(f.detail)}</td><td><a href="${esc(f.site_url)}">${esc(f.site_url)}</a></td><td>${(f.confidence*100).toFixed(0)}%</td><td class="dim">${esc(f.first_seen||'')}</td></tr>`).join('');
+  $('view').innerHTML=`<div class="panel"><h3>All infrastructure findings (${r.length})</h3>
+    <div class="cards">${cards}</div>
+    <table class="mt"><tr><th>sev</th><th>kind</th><th>detail</th><th>site</th><th>conf</th><th>first seen</th></tr>${rows||'<tr><td colspan=6 class=dim>no findings yet</td></tr>'}</table></div>`;
+}
 async function graph(){
   const r=await api('/api/search?q=&kind=actor');
   $('view').innerHTML=`<div class="panel flex-between"><h3>Relationship graph</h3>
@@ -192,7 +228,7 @@ async function styloAll(){
   $('view').innerHTML=`<div class="panel"><h3>Stylometric persona linkage (Capability 3)</h3>
     <p class="dim mt">Character n-gram authorship profiles over each handle's post corpus; cosine similarity with feature-level explainability.</p>
     <table class="mt"><tr><th>handle</th><th>similar to</th><th>score</th><th>top features</th></tr>${rows||'<tr><td colspan=4 class=dim>no corpora yet — seed demo data</td></tr>'}</table>
-    <div class="row mt"><button onclick="refresh()">Rebuild graph + merge (run</button>)</div></div>`;
+    <div class="row mt"><button onclick="refresh()">Rebuild graph + merge</button></div></div>`;
 }
 async function refresh(){toast('running stylometry + entity merging…');const r=await api('/api/refresh',{method:'POST'});toast(`merged: ${r.groups||0} groups, ${r.reassigned} handles reassigned`);render('stylo');}
 async function timeline(){
@@ -222,8 +258,8 @@ async function scan(){
 async function collect(){
   const src=$('csrc').value;toast('collecting seeds…');
   const r=await api('/api/collect',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({source:src})});
-  $('cres').innerHTML=`<div class="accent">Collected ${r.collected} new sites into the database.</div>`;
-  toast(`+${r.collected} sites`);
+  $('cres').innerHTML=`<div class="accent">Queued: ${r.source} · ${r.sites_collected||0} new sites so far — poll /api/collect/status/${r.job_id} for live progress.</div>`;
+  toast(`collect job ${r.job_id} queued`);
 }
 </script>
 </body>

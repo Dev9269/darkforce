@@ -76,10 +76,12 @@ def start():
         return
     os.makedirs(PGDATA, exist_ok=True)
     logf = open(PGLOG, "ab")
-    # spawn postgres directly (pg_ctl -l fights us for the log handle on Windows)
+    # spawn postgres directly (pg_ctl -l fights us for the log handle on Windows).
+    # DETACHED_PROCESS keeps it alive after the launching shell exits.
+    flags = subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP if os.name == "nt" else 0
     subprocess.Popen(
         [_bin("postgres"), "-D", PGDATA, "-p", str(PGPORT)],
-        stdout=logf, stderr=logf, cwd=PGDATA)
+        stdout=logf, stderr=logf, cwd=PGDATA, creationflags=flags)
     logf.close()
     if not _wait_port(PGPORT):
         # tail the log for diagnosis
