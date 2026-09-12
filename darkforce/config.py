@@ -8,6 +8,11 @@ RAW_DIR = os.path.join(DATA_DIR, "raw")
 os.makedirs(DATA_DIR, exist_ok=True)
 os.makedirs(RAW_DIR, exist_ok=True)
 
+# Leave DATABASE_URL unset to use SQLite (zero-config demo). Set it to a
+# postgres URL to switch the whole app to PostgreSQL, e.g.:
+#   postgresql://darkforce:darkforce_dev@localhost:5432/darkforce
+DATABASE_URL = os.getenv("DATABASE_URL", "")
+
 TOR_PROXY = "socks5h://127.0.0.1:9050"
 
 

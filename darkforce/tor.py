@@ -9,6 +9,7 @@ from .config import BASE_DIR, DATA_DIR
 
 EXT_PORT = 9050
 MANAGED_PORT = 9052
+MANAGED_CONTROL_PORT = 9053
 MANAGED_HOST = "127.0.0.1"
 TOR_EXE = os.path.join(BASE_DIR, "vendor", "tor", "tor", "tor.exe")
 MANAGED_DATA = os.path.join(DATA_DIR, "tor-managed")
@@ -17,6 +18,14 @@ BOOTSTRAP_TIMEOUT = 90
 
 _managed = None
 _last_proxy = None
+
+
+def managed_control_cookie():
+    """Path to the control auth cookie of the managed Tor, or None before spawn."""
+    if not managed_running():
+        return None
+    ck = os.path.join(MANAGED_DATA, "control_auth_cookie")
+    return ck if os.path.exists(ck) else None
 
 
 def listener(host=MANAGED_HOST, port=EXT_PORT, timeout=1.0):
@@ -46,6 +55,8 @@ def _spawn():
     cmd = [
         TOR_EXE,
         "--SocksPort", f"{MANAGED_HOST}:{MANAGED_PORT}",
+        "--ControlPort", f"{MANAGED_HOST}:{MANAGED_CONTROL_PORT}",
+        "--CookieAuthentication", "1",
         "--DataDirectory", MANAGED_DATA,
         "--SafeLogging", "1",
         "--Log", "notice stdout",

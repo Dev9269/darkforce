@@ -94,7 +94,8 @@ def crawl_and_ingest(db, url, use_tor=False, timeout=20):
     Never raises: every step is guarded so a single bad site cannot kill the
     crawl. Returns a summary dict the caller can print or aggregate.
     """
-    res = {"url": url, "error": None, "findings": 0, "identifiers": 0, "posts": 0, "handles": 0}
+    res = {"url": url, "error": None, "skipped": None,
+           "findings": 0, "identifiers": 0, "posts": 0, "handles": 0}
 
     try:
         snap = net.fetch_snap(url, use_tor=use_tor, timeout=timeout)
@@ -105,6 +106,12 @@ def crawl_and_ingest(db, url, use_tor=False, timeout=20):
 
     try:
         fp = detect.fingerprint(snap)
+        prev_hash = db.site_content_hash(url)
+        if prev_hash and prev_hash == fp["content_hash"]:
+            db.mark_site_scanned(url, content_hash=prev_hash)
+            res["skipped"] = "dedup"
+            log("DEDUP {} unchanged bytes hash, last_scan bumped", url)
+            return res
         site_id = db.upsert_site(
             url,
             server=fp["server"] or "",
@@ -118,12 +125,33 @@ def crawl_and_ingest(db, url, use_tor=False, timeout=20):
         log("FAIL {} site upsert: {}", url, e)
         return res
 
+    wall = (snap.meta or {}).get("wall")
+    if wall in ("captcha", "blocked"):
+        try:
+            db.mark_site_scanned(url, status=f"blocked_{wall}")
+        except Exception:
+            pass
+        res["skipped"] = wall
+        log("WALL {} -> {wall} (skipped, marked)", url)
+        return res
+
     try:
         findings, fps = detect.scan(snap)
         detect.pipeline_findings(site_id, db, findings, fps)
         res["findings"] = len(findings)
     except Exception as e:
         log("WARN {} scan/findings: {}", url, e)
+
+    host = (urlparse(url).hostname or "")
+    if host.endswith(".onion"):
+        try:
+            deep = detect.onionscan(url)
+            if deep:
+                detect.pipeline_findings(site_id, db, deep, {})
+                res["findings"] += len(deep)
+                log("ONIONSCAN {} -> {} finding(s)", url, len(deep))
+        except Exception as e:
+            log("WARN {} onionscan: {}", url, e)
 
     handles = _page_handles(BeautifulSoup(snap.html, "html.parser"), url)
 

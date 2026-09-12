@@ -1,9 +1,18 @@
+"""
+Database layer. Two drivers, one interface:
+  - SQLite  (default, zero-config, used for the demo/dogfooding)
+  - PostgreSQL (via DATABASE_URL env var, e.g.
+       postgresql://darkforce:darkforce_dev@localhost:5432/darkforce)
+
+Both offer the same method surface (q/one/exe + typed upserts/queries) so
+the rest of the app never cares which backend is active.
+"""
 import json
 import os
 import sqlite3
 from datetime import datetime, timedelta, timezone
 
-from .config import DB_PATH
+from .config import DB_PATH, DATABASE_URL
 
 
 def utcnow():
@@ -66,27 +75,75 @@ CREATE INDEX IF NOT EXISTS ix_handles_h ON handles(handle);
 CREATE INDEX IF NOT EXISTS ix_posts_h ON posts(handle);
 """
 
+PG_SCHEMA = """
+CREATE TABLE IF NOT EXISTS sources (
+  id BIGSERIAL PRIMARY KEY,
+  name TEXT UNIQUE, type TEXT, url TEXT, live INTEGER DEFAULT 1,
+  last_scan TEXT, notes TEXT
+);
+CREATE TABLE IF NOT EXISTS sites (
+  id BIGSERIAL PRIMARY KEY,
+  url TEXT UNIQUE, title TEXT, server TEXT, tech TEXT,
+  favicon_hash TEXT, content_hash TEXT, status TEXT,
+  category TEXT, source_id INTEGER, first_seen TEXT, last_scan TEXT
+);
+CREATE TABLE IF NOT EXISTS actors (
+  id BIGSERIAL PRIMARY KEY,
+  canon TEXT UNIQUE, category TEXT, confidence REAL DEFAULT 0,
+  first_seen TEXT, last_seen TEXT, bio TEXT, risk TEXT
+);
+CREATE TABLE IF NOT EXISTS handles (
+  id BIGSERIAL PRIMARY KEY,
+  actor_id INTEGER, handle TEXT, site_id INTEGER, url TEXT,
+  role TEXT, trust_level TEXT, joined TEXT, first_seen TEXT, last_seen TEXT
+);
+CREATE TABLE IF NOT EXISTS posts (
+  id BIGSERIAL PRIMARY KEY,
+  handle TEXT, site_id INTEGER, url TEXT, title TEXT, body TEXT,
+  ts TEXT, lang TEXT, content_hash TEXT
+);
+CREATE TABLE IF NOT EXISTS identifiers (
+  id BIGSERIAL PRIMARY KEY,
+  actor_id INTEGER, handle TEXT, kind TEXT, value TEXT, detail TEXT,
+  site_id INTEGER, url TEXT, first_seen TEXT, last_seen TEXT
+);
+CREATE TABLE IF NOT EXISTS findings (
+  id BIGSERIAL PRIMARY KEY,
+  site_id INTEGER, kind TEXT, severity TEXT, detail TEXT,
+  confidence REAL DEFAULT 0, url TEXT, first_seen TEXT
+);
+CREATE TABLE IF NOT EXISTS links (
+  id BIGSERIAL PRIMARY KEY,
+  src_type TEXT, src_value TEXT, tgt_type TEXT, tgt_value TEXT,
+  edge TEXT, confidence REAL DEFAULT 0, evidence TEXT, site_id INTEGER
+);
+CREATE INDEX IF NOT EXISTS ix_ident_value ON identifiers(value);
+CREATE UNIQUE INDEX IF NOT EXISTS ux_ident ON identifiers(handle, kind, value);
+CREATE INDEX IF NOT EXISTS ix_handles_h ON handles(handle);
+CREATE INDEX IF NOT EXISTS ix_posts_h ON posts(handle);
+"""
 
-class DB:
-    def __init__(self, path=DB_PATH):
-        self.path = path
-        os.makedirs(os.path.dirname(path), exist_ok=True)
-        self.conn = sqlite3.connect(path, check_same_thread=False)
-        self.conn.row_factory = sqlite3.Row
-        self.conn.executescript(SCHEMA)
-        self.conn.commit()
+try:
+    import psycopg2
+    import psycopg2.extras
+    _HAVE_PG = True
+except Exception:
+    psycopg2 = None
+    _HAVE_PG = False
 
-    def q(self, sql, args=()):
-        return self.conn.execute(sql, args).fetchall()
 
-    def one(self, sql, args=()):
-        r = self.conn.execute(sql, args).fetchone()
-        return dict(r) if r else None
+def _pg_sql(sql):
+    """Translate SQLite positional '?' placeholders to psycopg2 '%s'.
 
-    def exe(self, sql, args=()):
-        c = self.conn.execute(sql, args)
-        self.conn.commit()
-        return c
+    psycopg2 reserves '%' in the query text, so literal percents must be
+    doubled ('%%') or they get mistaken for argument slots.
+    """
+    sql = sql.replace("%", "%%")
+    return sql.replace("?", "%s")
+
+
+class BaseDB:
+    """Shared business methods; drivers only implement q/one/exe/backend bits."""
 
     # ---------- upserts ----------
     def upsert_source(self, name, type_, url, notes=""):
@@ -110,6 +167,29 @@ class DB:
     def site_id(self, url):
         r = self.one("SELECT id FROM sites WHERE url=?", (url,))
         return r["id"] if r else None
+
+    def site_content_hash(self, url):
+        r = self.one("SELECT content_hash FROM sites WHERE url=?", (url,))
+        return (r["content_hash"] if r else None)
+
+    def site_last_scan(self, url):
+        r = self.one("SELECT last_scan FROM sites WHERE url=?", (url,))
+        return (r["last_scan"] if r else None)
+
+    def mark_site_scanned(self, url, content_hash=None, status=None):
+        parts, args = [], []
+        if content_hash is not None:
+            parts.append("content_hash=?")
+            args.append(content_hash)
+        if status is not None:
+            parts.append("status=?")
+            args.append(status)
+        parts.append("last_scan=?")
+        args.append(utcnow())
+        if not parts:
+            return
+        args.append(url)
+        self.exe(f"UPDATE sites SET {', '.join(parts)} WHERE url=?", args)
 
     def actor_by_canon(self, canon):
         return self.one("SELECT * FROM actors WHERE canon=?", (canon,))
@@ -228,18 +308,20 @@ class DB:
 
     def timeline(self, start=None, end=None):
         evs = [dict(r) for r in self.q(
-            "SELECT ts, handle, title, url, 'post' etype FROM posts WHERE ts>='1900'" )]
-        for f in self.q("SELECT first_seen ts, detail title, url, 'finding' etype FROM findings WHERE ts>= '1900'"):
+            "SELECT ts, handle, title, url, 'post' etype FROM posts WHERE ts>='1900'")]
+        for f in self.q("SELECT first_seen ts, detail title, url, 'finding' etype FROM findings WHERE first_seen >= '1900'"):
             evs.append(dict(f))
         evs.sort(key=lambda e: e["ts"] or "")
         return evs
 
     def graph(self, actor_id=None, max_nodes=300):
         nodes, edges, seen = {}, [], set()
+
         def add_n(i, label, kind, meta=None):
             if i not in seen:
                 seen.add(i)
                 nodes[i] = {"id": i, "label": label, "kind": kind, "meta": meta or {}}
+
         if actor_id:
             a = self.one("SELECT * FROM actors WHERE id=?", (actor_id,))
             if not a:
@@ -276,6 +358,101 @@ class DB:
             "handles": self.handles_for_actor(actor_id),
             "n_posts": self.one("SELECT COUNT(*) c FROM posts p JOIN handles h ON h.handle=p.handle WHERE h.actor_id=?", (actor_id,))["c"],
         }
+
+
+class SQLiteDB(BaseDB):
+    def __init__(self, path=DB_PATH):
+        self.path = path
+        os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+        self.conn = sqlite3.connect(path, check_same_thread=False)
+        self.conn.row_factory = sqlite3.Row
+        self.conn.execute("PRAGMA journal_mode=WAL")
+        self.conn.execute("PRAGMA synchronous=NORMAL")
+        self.conn.executescript(SCHEMA)
+        self.conn.commit()
+
+    def q(self, sql, args=()):
+        return self.conn.execute(sql, args).fetchall()
+
+    def one(self, sql, args=()):
+        r = self.conn.execute(sql, args).fetchone()
+        return dict(r) if r else None
+
+    def exe(self, sql, args=()):
+        c = self.conn.execute(sql, args)
+        self.conn.commit()
+        return c
+
+
+class PostgresDB(BaseDB):
+    def __init__(self, dsn=None):
+        if psycopg2 is None:
+            raise RuntimeError("psycopg2 not installed; DATABASE_URL can't be used")
+        self.dsn = dsn or DATABASE_URL
+        self.conn = psycopg2.connect(self.dsn)
+        self.conn.autocommit = False
+        with self.conn.cursor() as cur:
+            cur.execute(PG_SCHEMA)
+        self.conn.commit()
+
+    def q(self, sql, args=()):
+        with self.conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+            cur.execute(_pg_sql(sql), list(args))
+            return cur.fetchall()
+
+    def one(self, sql, args=()):
+        with self.conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+            cur.execute(_pg_sql(sql), list(args))
+            r = cur.fetchone()
+            return dict(r) if r else None
+
+    def exe(self, sql, args=()):
+        with self.conn.cursor() as cur:
+            cur.execute(_pg_sql(sql), list(args))
+        self.conn.commit()
+        return cur
+
+
+# The driver factory — app code keeps calling DB() with no args.
+def DB(path=None):
+    if DATABASE_URL:
+        if not _HAVE_PG:
+            raise RuntimeError(
+                "DATABASE_URL is set but psycopg2-binary isn't installed "
+                "(pip install psycopg2-binary)")
+        return PostgresDB(DATABASE_URL)
+    return SQLiteDB(path or DB_PATH)
+
+
+def migrate(dst_db=None):
+    """One-time SQLite -> Postgres copy. dst must be a DB instance (default: DATABASE_URL)."""
+    src = SQLiteDB(DB_PATH)
+    dst = dst_db or DB()
+    tables = ("sources", "sites", "actors", "handles", "posts",
+              "identifiers", "findings", "links")
+    moved = {}
+    for t in tables:
+        try:
+            rows = [dict(r) for r in src.q(f"SELECT * FROM {t}")]
+        except Exception as e:
+            print(f"  skip {t}: {e}")
+            continue
+        for r in rows:
+            cols = list(r.keys())
+            ph = ",".join("?" * len(cols))
+            cols_s = ",".join(cols)
+            dst.exe(
+                f"INSERT INTO {t} ({cols_s}) VALUES ({ph}) ON CONFLICT DO NOTHING",
+                tuple(r[c] for c in cols))
+        # advance the identity / serial sequence so new inserts don't collide
+        try:
+            dst.exe("SELECT setval(pg_get_serial_sequence('" + t + "','id'), "
+                    "COALESCE((SELECT MAX(id) FROM " + t + "), 1), true)")
+        except Exception:
+            pass
+        moved[t] = len(rows)
+        print(f"  migrated {t}: {len(rows)} rows")
+    return moved
 
 
 def tz_filter(start, end):

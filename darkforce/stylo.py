@@ -31,7 +31,7 @@ def cosine(a, b):
     dot = sum(a[k] * b[k] for k in inter)
     na = math.sqrt(sum(v * v for v in a.values())) or 1
     nb = math.sqrt(sum(v * v for v in b.values())) or 1
-    return dot / (na * nb)
+    return max(0.0, min(1.0, dot / (na * nb)))
 
 
 def explain(a, b, k=5):
@@ -40,7 +40,7 @@ def explain(a, b, k=5):
 
 
 def corpus_by_handle(db, min_posts=8):
-    hs = db.q("SELECT handle, COUNT(*) c FROM posts GROUP BY handle HAVING c>=?", (min_posts,))
+    hs = db.q("SELECT handle, COUNT(*) c FROM posts GROUP BY handle HAVING COUNT(*)>=?", (min_posts,))
     res = {}
     for r in hs:
         posts = db.posts_for_handle(r["handle"])

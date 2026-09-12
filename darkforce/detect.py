@@ -1,5 +1,9 @@
 import hashlib
+import json
+import os
 import re
+import shutil
+import subprocess
 
 from .extract import IP
 
@@ -107,3 +111,46 @@ def pipeline_findings(site_id, db, findings, fps):
         db.add_finding(site_id, kind, sev, detail, conf)
         rows.append({"kind": kind, "severity": sev, "detail": detail, "confidence": conf})
     return rows
+
+
+def onionscan(url, exe=None, timeout=120):
+    """Optional deep scan via the OnionScan tool (github.com/s-rah/onionscan).
+
+    OnionScan is a Go binary that isn't shipped with DarkForce. If the binary
+    isn't installed, this returns an empty list and the pipeline keeps going
+    (we never fail a crawl just because an auxiliary tool is missing).
+    """
+    if not url.endswith(".onion"):
+        return []
+    exe = exe or os.environ.get("ONIONSCAN") or shutil.which("onionscan")
+    if not exe:
+        return []
+    try:
+        r = subprocess.run(
+            [exe, "--jsonReport", url],
+            capture_output=True, text=True, timeout=timeout)
+    except Exception as e:
+        return [("onionscan", "low", f"OnionScan run error: {e}", 0.3)]
+    if r.returncode != 0 or not r.stdout.strip():
+        return []
+    try:
+        report = json.loads(r.stdout)
+    except Exception:
+        return [("onionscan", "low", "OnionScan returned non-JSON output", 0.3)]
+    out = []
+    if report.get("pgpKeysMatched"):
+        out.append(("onionscan_pgp", "high", "OnionScan matched PGP keys on the site", 0.8))
+    for key in ("relatedServices", "linkedSites"):
+        if report.get(key):
+            out.append(("onionscan_linked", "medium",
+                        f"OnionScan found linked/related service: {', '.join(map(str, report[key][:4]))}", 0.7))
+    if report.get("bitcoinAddresses"):
+        out.append(("onionscan_btc", "high",
+                    f"OnionScan extracted Bitcoin addresses: {', '.join(map(str, report['bitcoinAddresses'][:4]))}", 0.8))
+    if report.get("interestingFiles"):
+        out.append(("onionscan_files", "medium",
+                    "Interesting files exposed: " + ", ".join(map(str, report["interestingFiles"][:4])), 0.7))
+    if report.get("serverVersion"):
+        out.append(("onionscan_server", "medium",
+                    f"Server version: {report['serverVersion']}", 0.6))
+    return out

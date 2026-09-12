@@ -65,6 +65,50 @@ def graph(actor_id: int = 0):
     return db.graph(actor_id or None)
 
 
+@app.get("/graph", response_class=Response)
+def graph_view(min_conf: float = 0.0):
+    """Standalone interactive entity graph (pyvis/vis.js). Color = node kind,
+    edge thickness = confidence. &min_conf= filters weak links."""
+    try:
+        import pyvis.network as pv
+    except ImportError:
+        raise HTTPException(500, "pyvis not installed: pip install pyvis")
+
+    g = db.graph()
+    nodes, edges = g["nodes"], g["edges"]
+    if min_conf > 0:
+        edges = [e for e in edges if (e.get("w") or 0) >= min_conf]
+        keep = {e["s"] for e in edges} | {e["t"] for e in edges}
+        nodes = [n for n in nodes if n["id"] in keep]
+
+    colors = {
+        "actor": "#e74c3c", "handle": "#f39c12", "site": "#95a5a6",
+        "btc": "#8e44ad", "xmr": "#9b59b6", "email": "#2ecc71",
+        "pgp": "#3498db", "onion": "#7f8c8d", "enviro": "#1abc9c",
+    }
+    net = pv.Network(height="720px", width="100%", bgcolor="#0d1117",
+                     font_color="#d1d5db", directed=False)
+    net.barnes_hut(gravity=-8000, central_gravity=0.3, spring_length=140, spring_strength=0.04)
+    for n in nodes:
+        net.add_node(n["id"], label=n["label"], title=f"[{n['kind']}] {n['label']}",
+                     color=colors.get(n["kind"], "#cccccc"))
+    for e in edges:
+        w = max(0.2, float(e.get("w") or 0.5))
+        net.add_edge(e["s"], e["t"], value=w,
+                     title=f"{e.get('e')} (conf {w:.2f})",
+                     color="#3b82f6" if w >= 0.8 else "#6b7280")
+    html = net.generate_html()
+    return Response(content=html, media_type="text/html")
+
+
+@app.get("/api/pg")
+def pg_status():
+    """Report which database backend is active (sqlite vs postgres)."""
+    from .config import DATABASE_URL
+    return {"backend": "postgres" if DATABASE_URL else "sqlite",
+            "url": DATABASE_URL or "sqlite:///data/darkforce.db"}
+
+
 @app.get("/api/misconfigs")
 def misconfigs(severity: str = ""):
     rows = db.q("SELECT f.*, s.url site_url, s.title FROM findings f JOIN sites s ON s.id=f.site_id")

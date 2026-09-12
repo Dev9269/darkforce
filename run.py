@@ -6,6 +6,76 @@ BASE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, BASE)
 
 
+def run_pass(db, tor, max_sites=30, verbose=True):
+    """One full collection pass: seed -> crawl -> stylometry merge.
+    Returns a summary dict. Safe to call repeatedly (dedup skips unchanged pages)."""
+    from darkforce import link, seeds, stylo
+    from darkforce.collect import crawl_and_ingest
+    from urllib.parse import urlparse
+    import time
+
+    new_urls = []
+    totals = {"findings": 0, "identifiers": 0, "posts": 0,
+              "handles": 0, "sites": 0, "failed": 0, "skipped": 0}
+
+    if verbose:
+        print("[live] seeding...")
+    for s in ("clearnet", "directory", "ahmia", "darkfail", "ransomware"):
+        try:
+            items = seeds.collect_source(s)
+        except Exception as e:
+            print(f"[live] {s}: seed error: {e}")
+            continue
+        n = 0
+        for it in items:
+            url = it["url"]
+            if not url or db.site_id(url):
+                continue
+            db.upsert_site(url, title=it.get("title", "")[:200], category=it.get("category", "seed"))
+            new_urls.append(url)
+            n += 1
+            totals["sites"] += 1
+            if len(new_urls) >= max_sites:
+                break
+        if verbose:
+            print(f"[live] {s}: collected {n} new sites ({len(new_urls)} total so far)")
+        if len(new_urls) >= max_sites:
+            if verbose:
+                print(f"[live] hit cap of {max_sites} new sites, stopping seed phase")
+            break
+
+    crawlable = [u for u in new_urls if tor or ".onion" not in (urlparse(u).hostname or "")]
+    if verbose and len(new_urls) - len(crawlable):
+        print(f"[live] Tor unavailable - skipping {len(new_urls) - len(crawlable)} .onion seed(s), "
+              f"crawling {len(crawlable)} clearnet site(s)")
+
+    if verbose:
+        print(f"[live] crawling {len(crawlable)} new site(s) (use_tor={tor})...")
+    for i, url in enumerate(crawlable, 1):
+        r = crawl_and_ingest(db, url, use_tor=tor)
+        if r.get("skipped"):
+            totals["skipped"] += 1
+        if r["error"]:
+            totals["failed"] += 1
+        for k in ("findings", "identifiers", "posts", "handles"):
+            totals[k] += r[k]
+        if verbose and (r["error"] or r["skipped"] or r["findings"] or r["identifiers"] or r["posts"] or r["handles"]):
+            extra = (f"  ({r['error']})" if r["error"] else "") or (f"  (skipped: {r['skipped']})" if r["skipped"] else "")
+            print(f"  [{i}/{len(crawlable)}] {url} -> findings={r['findings']} "
+                  f"ids={r['identifiers']} posts={r['posts']} handles={r['handles']}{extra}")
+        time.sleep(1.5)
+
+    if verbose:
+        print("[live] merging handles into actors (stylometry + shared identifiers)...")
+    prof, pairs, per = stylo.match_all(db)
+    merged = link.rebuild_actors(db, stylo_pairs=pairs)
+    totals["stylo_pairs"] = len(pairs)
+    if verbose:
+        print("[live] stylo pairs:", len(pairs), "->", merged)
+        print(f"[live] crawl totals: {totals}")
+    return totals
+
+
 def main():
     ap = argparse.ArgumentParser(prog="darkforce",
                                  description="DarkForce - dark web threat actor de-anonymization platform")
@@ -13,6 +83,10 @@ def main():
     ap.add_argument("--live", action="store_true", help="pull live seeds from clearnet APIs before starting")
     ap.add_argument("--port", type=int, default=8000)
     ap.add_argument("--refresh", action="store_true", help="re-run graph/stylometry merge, then exit")
+    ap.add_argument("--daemon", action="store_true",
+                    help="run live collection passes on a schedule (requires --live or --demo)")
+    ap.add_argument("--interval", type=int, default=15,
+                    help="minutes between autonomous collection passes (default 15)")
     args = ap.parse_args()
 
     from darkforce.db import DB
@@ -28,7 +102,7 @@ def main():
         print("stats:", db.stats())
         return
 
-    from darkforce.tor import active_proxy, external_running, start_managed
+    from darkforce.tor import external_running, start_managed
 
     if external_running():
         print("Tor detected on 127.0.0.1:9050 - .onion sites will be crawled via existing SOCKS5.")
@@ -48,55 +122,22 @@ def main():
         print("demo stats:", db.stats())
 
     if args.live:
-        from darkforce import link, seeds, stylo
-        from darkforce.collect import crawl_and_ingest
-        import time
+        run_pass(db, tor)
 
-        new_urls = []
-        max_sites = 30
-        for s in ("clearnet", "directory", "ahmia", "darkfail", "ransomware"):
-            items = seeds.collect_source(s)
-            n = 0
-            for it in items:
-                url = it["url"]
-                if not url or db.site_id(url):
-                    continue
-                db.upsert_site(url, title=it.get("title", "")[:200], category=it.get("category", "seed"))
-                new_urls.append(url)
-                n += 1
-                if len(new_urls) >= max_sites:
-                    break
-            print(f"[live] {s}: collected {n} new sites ({len(new_urls)} total so far)")
-            if len(new_urls) >= max_sites:
-                print(f"[live] hit cap of {max_sites} new sites, stopping seed phase")
-                break
-
-        from urllib.parse import urlparse
-
-        crawlable = [u for u in new_urls if tor or ".onion" not in (urlparse(u).hostname or "")]
-        skipped = len(new_urls) - len(crawlable)
-        if skipped:
-            print(f"[live] Tor unavailable - skipping {skipped} .onion seed(s), crawling {len(crawlable)} clearnet site(s)")
-
-        print(f"[live] crawling {len(crawlable)} new site(s) (use_tor={tor})...")
-        totals = {"findings": 0, "identifiers": 0, "posts": 0, "handles": 0, "failed": 0}
-        for i, url in enumerate(crawlable, 1):
-            r = crawl_and_ingest(db, url, use_tor=tor)
-            for k in ("findings", "identifiers", "posts", "handles"):
-                totals[k] += r[k]
-            if r["error"]:
-                totals["failed"] += 1
-            if r["error"] or r["findings"] or r["identifiers"] or r["posts"] or r["handles"]:
-                print(f"  [{i}/{len(crawlable)}] {url} -> findings={r['findings']} "
-                      f"ids={r['identifiers']} posts={r['posts']} handles={r['handles']}"
-                      + (f"  ({r['error']})" if r["error"] else ""))
-            time.sleep(1.5)
-
-        print("[live] merging handles into actors (stylometry + shared identifiers)...")
-        prof, pairs, per = stylo.match_all(db)
-        print("[live] stylo pairs:", len(pairs), "->", link.rebuild_actors(db, stylo_pairs=pairs))
-        print(f"[live] crawl totals: {totals}")
-        print()
+    if args.daemon:
+        try:
+            from apscheduler.schedulers.background import BackgroundScheduler
+        except ImportError:
+            print("--daemon requires APScheduler: pip install apscheduler")
+            sys.exit(1)
+        sched = BackgroundScheduler(daemon=True)
+        minutes = max(1, args.interval)
+        sched.add_job(
+            lambda: run_pass(db, tor, verbose=False),
+            "interval", minutes=minutes, id=f"pass-{minutes}m", max_instances=1,
+            coalesce=True, misfire_grace_time=300)
+        sched.start()
+        print(f"[daemon] autonomous collection every {minutes} min (Tor={'yes' if tor else 'NO'})")
 
     from darkforce.api import main as run_api
 
