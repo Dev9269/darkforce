@@ -1,4 +1,5 @@
 import json
+import os
 import re
 import time
 
@@ -97,6 +98,72 @@ CLEARNET_INDEX = [
 ]
 
 
+def collect_telegram(channels=None):
+    """Ingest public Telegram channels via Telethon (optional).
+
+    Requires:    pip install telethon
+    Requires env: TG_API_ID=<api_id>  TG_API_HASH=<api_hash>
+    Optional env: TG_SESSION_NAME, TG_CHANNELS (@ch1,@ch2)
+    Returns [{title, url, category}] with telegram.me links as seeds. Every
+    channel post URL is treated as a lightweight clearnet seed.
+    """
+    out = []
+    channels = channels or os.getenv("TG_CHANNELS", "").strip()
+    if not channels:
+        return out
+    api_id = os.getenv("TG_API_ID", "").strip()
+    api_hash = os.getenv("TG_API_HASH", "").strip()
+    if not (api_id and api_hash):
+        return out
+    try:
+        import asyncio
+        from telethon import TelegramClient
+    except ImportError:
+        return out
+    session = os.getenv("TG_SESSION_NAME", "darkforce")
+    channels = [c.strip() if c.strip().startswith("@") else "@" + c.strip()
+                for c in channels.split(",") if c.strip()]
+
+    def run():
+        return asyncio.run(_telegram_pull(api_id, api_hash, session, channels))
+
+    try:
+        out = run()
+    except Exception:
+        return out
+    return out
+
+
+async def _telegram_pull(api_id, api_hash, session, channels, limit=25):
+    from telethon import TelegramClient
+    from telethon.tl.functions.messages import GetHistoryRequest
+    import io
+
+    out = []
+    client = TelegramClient(session, int(api_id), api_hash)
+    await client.connect()
+    if not await client.is_user_authorized():
+        await client.disconnect()
+        return out
+    for ch in channels:
+        try:
+            entity = await client.get_entity(ch)
+            hist = await client(GetHistoryRequest(
+                peer=entity, offset_id=0, offset_date=None,
+                add_offset=0, limit=limit, max_id=0, min_id=0, hash=0))
+            for m in hist.messages:
+                text = (m.message or "").strip()
+                if not text:
+                    continue
+                out.append({"title": text[:200].replace("\n", " "),
+                            "url": f"https://t.me/{ch.strip('@')}/{m.id}",
+                            "category": "telegram-chat"})
+        except Exception:
+            continue
+    await client.disconnect()
+    return out
+
+
 def collect_source(name):
     """Returns list of {title,url,category} seeds for a named source."""
     if name == "ahmia":
@@ -105,6 +172,8 @@ def collect_source(name):
         return collect_darkfail()
     if name == "ransomware":
         return collect_ransomware()
+    if name == "telegram":
+        return collect_telegram()
     if name == "directory":
         return [{"title": t, "url": "http://" + o, "category": c} for t, o, c in ONION_DIRECTORY]
     if name == "clearnet":

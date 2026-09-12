@@ -1,0 +1,22 @@
+id,canon,category,confidence,first_seen,last_seen,bio,risk,actor_id,handle,kind,value,detail,site_id,url,site_url,finding_kind,severity
+19,Shad0wVendor,market,0.97,2026-09-12T06:49:26+00:00,2026-09-12T06:49:26+00:00,,merged_alias,,,,,,,,,,
+20,GhostRunner,market,0.87,2026-09-12T06:49:26+00:00,2026-09-12T06:49:26+00:00,,open,,,,,,,,,,
+21,QuietMule,forum,0.82,2026-09-12T06:49:26+00:00,2026-09-12T06:49:26+00:00,,open,,,,,,,,,,
+286,,,,2026-09-12T06:49:26+00:00,2026-09-12T06:49:26+00:00,,,19,Shad0wVendor,pgp,C5ED 1FC5 D91C B512 B35A E480 B456 0B6E F009 1C87,shadow_official key,,,,,
+287,,,,2026-09-12T06:49:26+00:00,2026-09-12T06:49:26+00:00,,,19,Shad0wVendor,pgp_email,shadow_official@protonmail.com,UID on PGP key,,,,,
+288,,,,2026-09-12T06:49:26+00:00,2026-09-12T06:49:26+00:00,,,19,Shad0wVendor,btc,bc1qxy2kgdygjrsqtzq2n0yrf2493p83kkfjhx0wlh,donations/withdrawals wallet,,,,,
+289,,,,2026-09-12T06:49:26+00:00,2026-09-12T06:49:26+00:00,,,19,Shad0wVendor,jabber,shadow_official@jabber.exploit,order contact,,,,,
+290,,,,2026-09-12T06:49:26+00:00,2026-09-12T06:49:26+00:00,,,19,Shad0wVendor,onion,http://shadowcust5xyz7plbm2a4dmu3qpwku2f.onion,customer vault service,,,,,
+291,,,,2026-09-12T06:49:26+00:00,2026-09-12T06:49:26+00:00,,,19,Cyph3rKing,pgp,C5ED 1FC5 D91C B512 B35A E480 B456 0B6E F009 1C87,shadow_official key,,,,,
+292,,,,2026-09-12T06:49:26+00:00,2026-09-12T06:49:26+00:00,,,19,Cyph3rKing,btc,bc1qxy2kgdygjrsqtzq2n0yrf2493p83kkfjhx0wlh,donations/withdrawals wallet,,,,,
+293,,,,2026-09-12T06:49:26+00:00,2026-09-12T06:49:26+00:00,,,19,Cyph3rKing,onion,http://shadowcust5xyz7plbm2a4dmu3qpwku2f.onion,customer vault service,,,,,
+294,,,,2026-09-12T06:49:26+00:00,2026-09-12T06:49:26+00:00,,,20,GhostRunner,pgp,99CE 3905 EBED 748C 1165 D0BF 0924 4554 7314 7CE2,GHOST-A key,,,,,
+295,,,,2026-09-12T06:49:26+00:00,2026-09-12T06:49:26+00:00,,,20,GhostRunner,btc,1BoatSLRHtKNngkdXEeobR76b53LETtpyT,withdrawals,,,,,
+296,,,,2026-09-12T06:49:26+00:00,2026-09-12T06:49:26+00:00,,,20,GhostRunner,xmr,8Bsz7X4myiTW8j2ohTyQfS1RZJYAV6xKqhZfPkUzKpZod7CwJxzsZ1nQh3JzB7VjRqB2Mx4uYbQaR6wSmN8qKXp0vM9jTz2wRkYbPqXfD8R2yNmR4kVgHm6CcY,primary pay-in,,,,,
+297,,,,2026-09-12T06:49:26+00:00,2026-09-12T06:49:26+00:00,,,21,QuietMule,email,quietmule@protonmail.com,contact,,,,,
+298,,,,2026-09-12T06:49:26+00:00,2026-09-12T06:49:26+00:00,,,21,QuietMule,telegram,qm_bulk01,bulk buyer channel,,,,,
+,,,,,,,,,,,,"Apache mod_status exposed; backend IPs leaked: 10.10.0.12, 10.10.0.5, 127.0.0.1",,,http://alphanex6x2k7hzvab4evqudqnixx.onion/server-status,server_status,critical
+,,,,,,,,,,,,Default server banner exposed: nginx/1.18.0 (Ubuntu),,,http://alphanex6x2k7hzvab4evqudqnixx.onion,server_banner,medium
+,,,,,,,,,,,,Favicon hash matches clearnet host: https://corporate-dev.example.com,,,http://alphanex6x2k7hzvab4evqudqnixx.onion,favicon_match,critical
+,,,,,,,,,,,,Server banner identical to clearnet host corporate-dev.example.com,,,http://alphanex6x2k7hzvab4evqudqnixx.onion,banner_match,high
+,,,,,,,,,,,,TLS cert CN=cert.dev-cloud.example.com (clearweb domain),,,http://alphanex6x2k7hzvab4evqudqnixx.onion,tls_cert,high

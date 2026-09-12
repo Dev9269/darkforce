@@ -43,6 +43,16 @@ CREATE TABLE IF NOT EXISTS collector_health (
   success_count INTEGER DEFAULT 0, error_count INTEGER DEFAULT 0,
   last_success TEXT, last_error TEXT, last_error_detail TEXT
 );
+CREATE TABLE IF NOT EXISTS users (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  username TEXT UNIQUE, password_hash TEXT, role TEXT,
+  created_at TEXT
+);
+CREATE TABLE IF NOT EXISTS audit_log (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  username TEXT, role TEXT, method TEXT, path TEXT,
+  status INTEGER, ts TEXT
+);
 """
 
 PG_EXTRA_SCHEMA = """
@@ -60,6 +70,16 @@ CREATE TABLE IF NOT EXISTS collector_health (
   source TEXT PRIMARY KEY,
   success_count INTEGER DEFAULT 0, error_count INTEGER DEFAULT 0,
   last_success TEXT, last_error TEXT, last_error_detail TEXT
+);
+CREATE TABLE IF NOT EXISTS users (
+  id BIGSERIAL PRIMARY KEY,
+  username TEXT UNIQUE, password_hash TEXT, role TEXT,
+  created_at TEXT
+);
+CREATE TABLE IF NOT EXISTS audit_log (
+  id BIGSERIAL PRIMARY KEY,
+  username TEXT, role TEXT, method TEXT, path TEXT,
+  status INTEGER, ts TEXT
 );
 """
 
@@ -467,6 +487,43 @@ class BaseDB:
         """Sources whose last fetch succeeded (usable for autonomous polling)."""
         return [r["source"] for r in self.q(
             "SELECT source FROM collector_health WHERE last_success IS NOT NULL")]
+
+    # ---------- RBAC: users + audit log ----------
+    def get_user(self, username):
+        return self.one("SELECT * FROM users WHERE username=?", (username,))
+
+    def add_user(self, username, password_hash, role="analyst"):
+        self.exe("INSERT INTO users (username, password_hash, role, created_at) VALUES (?,?,?,?)",
+                 (username, password_hash, role, self._now()))
+        return self.one("SELECT * FROM users WHERE username=?", (username,))
+
+    def list_users(self):
+        return [dict(r) for r in self.q("SELECT id, username, role, created_at FROM users ORDER BY id")]
+
+    def delete_user(self, uid):
+        self.exe("DELETE FROM users WHERE id=?", (uid,))
+
+    def log_audit(self, username, role, method, path, status):
+        try:
+            self.exe("INSERT INTO audit_log (username, role, method, path, status, ts) VALUES (?,?,?,?,?,?)",
+                     (username or "-", role or "-", method, path, status, self._now()))
+        except Exception:
+            pass  # auditing must never break the request
+
+    def audit_logs(self, limit=200):
+        return [dict(r) for r in self.q(
+            "SELECT * FROM audit_log ORDER BY id DESC LIMIT ?", (limit,))]
+
+    def ensure_admin(self, username, password_hash):
+        """Seed the initial admin only when the users table is empty."""
+        if not self.one("SELECT id FROM users LIMIT 1"):
+            self.add_user(username, password_hash, role="admin")
+            return True
+        return False
+
+    def _now(self):
+        import datetime
+        return datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds")
 
 
 class SQLiteDB(BaseDB):

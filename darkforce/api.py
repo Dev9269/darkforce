@@ -1,16 +1,16 @@
-import json
+﻿import json
 import os
 import uuid
 from typing import Optional
 
-from fastapi import BackgroundTasks, FastAPI, HTTPException
+from fastapi import BackgroundTasks, Depends, FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from . import detect, link, net, seeds, stylo
+from . import auth, detect, link, net, seeds, stylo
 from .collect import crawl_and_ingest
-from .config import tor_available
+from .config import ADMIN_PASSWORD, ADMIN_USER, tor_available
 from .db import DB
 from .export import export as export_resp
 from .tor import active_proxy
@@ -21,6 +21,36 @@ db = DB()
 app = FastAPI(title="DarkForce - Dark Web Threat Actor De-anonymization")
 
 COLLECT_JOBS = {}
+
+def _seed_admin():
+    """Create the initial admin the first time the app runs (config-seeded)."""
+    try:
+        db.ensure_admin(ADMIN_USER, auth.hash_password(ADMIN_PASSWORD))
+    except Exception:
+        pass  # both backends tolerate (e.g. already-seeded race)
+
+
+_seed_admin()
+
+
+@app.middleware("http")
+async def audit_middleware(request: Request, call_next):
+    """Log every API call: user, role, method, path, status, timestamp."""
+    if not request.url.path.startswith("/api/"):
+        return await call_next(request)
+    response = await call_next(request)
+    try:
+        who = auth.try_username(request.headers.get("authorization", ""))
+        db.log_audit(who, "-" if who == "-" else "?", request.method,
+                     request.url.path, response.status_code)
+    except Exception:
+        pass
+    return response
+
+
+class LoginReq(BaseModel):
+    username: str
+    password: str
 
 
 class SearchReq(BaseModel):
@@ -36,6 +66,53 @@ class ScanReq(BaseModel):
 class CollectReq(BaseModel):
     source: str = "directory"
     use_tor: Optional[bool] = None
+
+
+@app.post("/api/login")
+def login(req: LoginReq):
+    u = db.get_user(req.username)
+    if not u or not auth.verify_password(req.password, u["password_hash"]):
+        raise HTTPException(401, "invalid username or password")
+    role = u["role"]
+    return {"token": auth.issue_token(req.username, role), "username": req.username, "role": role}
+
+
+@app.get("/api/me")
+def me(who: dict = Depends(auth.current_user)):
+    return who
+
+
+@app.get("/api/audit")
+def audit_endpoint(limit: int = 200, who: dict = Depends(auth.require_role("admin"))):
+    return db.audit_logs(limit)
+
+
+@app.get("/api/users")
+def users_endpoint(who: dict = Depends(auth.require_role("admin"))):
+    return db.list_users()
+
+
+class UserReq(BaseModel):
+    username: str
+    password: str
+    role: str = "analyst"
+
+
+@app.post("/api/users")
+def user_add(req: UserReq, who: dict = Depends(auth.require_role("admin"))):
+    if req.role not in ("viewer", "analyst", "admin"):
+        raise HTTPException(400, "role must be viewer|analyst|admin")
+    if db.get_user(req.username):
+        raise HTTPException(409, "user exists")
+    db.add_user(req.username, auth.hash_password(req.password), req.role)
+    db.log_audit(who["username"], "admin", "POST", "/api/users", 200)
+    return {"added": req.username, "role": req.role}
+
+
+@app.delete("/api/users/{uid}")
+def user_del(uid: int, who: dict = Depends(auth.require_role("admin"))):
+    db.delete_user(uid)
+    return {"deleted": uid}
 
 
 @app.get("/api/stats")
@@ -139,14 +216,14 @@ def timeline(start: str = "", end: str = ""):
 
 
 @app.post("/api/refresh")
-def refresh():
+def  refresh(who: dict = Depends(auth.require_role("analyst"))):
     prof, pairs, per = stylo.match_all(db)
     res = link.rebuild_actors(db, stylo_pairs=pairs)
     return {**res, "stylo_pairs": len(pairs)}
 
 
 @app.post("/api/scan")
-def scan(req: ScanReq):
+def  scan(req: ScanReq, who: dict = Depends(auth.require_role("analyst"))):
     try:
         snap = net.fetch_snap(req.url, use_tor=req.use_tor)
     except Exception as e:
@@ -207,7 +284,7 @@ def _collect_job(job_id, source, want_tor):
 
 
 @app.post("/api/collect")
-def collect(req: CollectReq, background: BackgroundTasks):
+def  collect(req: CollectReq, background: BackgroundTasks, who: dict = Depends(auth.require_role("analyst"))):
     want_tor = req.use_tor if req.use_tor is not None else True  # auto: try Tor, fall back to clearnet
     job_id = uuid.uuid4().hex[:12]
     COLLECT_JOBS[job_id] = {"status": "queued", "source": req.source, "use_tor": want_tor,
@@ -228,7 +305,9 @@ def collect_status(job_id: str):
 
 
 @app.get("/api/export")
-def api_export(fmt: str = "json", q: str = "", kind: str = "all", title: str = "DarkForce report"):
+def api_export(fmt: str = "json", q: str = "", kind: str = "all",
+               title: str = "Dark Force - threat actor report",
+               who: dict = Depends(auth.require_role("viewer"))):
     res = db.search(q, kind)
     out = []
     out += res["actors"]
@@ -240,6 +319,40 @@ def api_export(fmt: str = "json", q: str = "", kind: str = "all", title: str = "
         out += [dict(r) for r in db.q("SELECT i.kind, i.value, s.url site_url, f.kind finding_kind, "
                                       "f.severity, f.detail FROM findings f JOIN sites s ON s.id=f.site_id "
                                       "LEFT JOIN identifiers i ON 1=0")]
+
+    if fmt == "pdf":
+        from .config import DATABASE_URL
+        st = db.stats()
+        meta = {
+            "title": title,
+            "subtitle": "Dark web threat-actor de-anonymization - analyst summary",
+            "classification": "UNCLASSIFIED // PUBLIC RELEASE",
+            "backend": "postgres" if DATABASE_URL else "sqlite",
+            "coverage": f"{st.get('actors', 0)} actors, {st.get('sites', 0)} sites, "
+                        f"{st.get('identifiers', 0)} identifiers, {st.get('findings', 0)} findings",
+            "verdict": {
+                "confidence": (lambda pairs: round(max([s for _, m in pairs for s in (m.get("score") or 0)] or [0.0]), 2))
+                              (stylo.match_all(db)[2]),
+                "basis": "stylometric n-gram overlap + shared identifiers",
+                "rationale": (f"High-confidence persona linkage is flagged when a handle's n-gram "
+                              f"profile is closer than 0.5 to another actor's corpus while sharing "
+                              f"at least one unique identifier (PGP/wallet/email/onion)."),
+            },
+            "method_notes": [
+                "Collection: read-only fetch of publicly served pages via clearnet discovery APIs "
+                "(Ahmia, dark.fail, ransomware.live) and Tor-restricted crawling with per-host rate "
+                "limiting and circuit rotation.",
+                "Entity resolution: identifier overlap with weighted confidence edges; stylometry: "
+                "character n-gram authorship profiles with cosine similarity and feature "
+                "explainability (top contributing features shown per match).",
+                "Attribution is analytic judgment with confidence, never confirmed identity.",
+            ],
+        }
+        from .export import report_pdf
+        data = report_pdf(meta, records=out[:60])
+        return Response(content=data, media_type="application/pdf",
+                        headers={"Content-Disposition": "attachment; filename=darkforce_report.pdf"})
+
     data, ct, fn = export_resp(out, fmt, title)
     return Response(content=data, media_type=ct,
                     headers={"Content-Disposition": f"attachment; filename={fn}"})
@@ -262,13 +375,13 @@ def watchlist_list():
 
 
 @app.post("/api/watchlist")
-def watchlist_add(req: WatchReq):
+def  watchlist_add(req: WatchReq, who: dict = Depends(auth.require_role("analyst"))):
     db.add_watchlist(req.name, req.pattern, req.kind)
     return {"added": req.name}
 
 
 @app.delete("/api/watchlist/{wid}")
-def watchlist_del(wid: int):
+def  watchlist_del(wid: int, who: dict = Depends(auth.require_role("analyst"))):
     db.delete_watchlist(wid)
     return {"deleted": wid}
 

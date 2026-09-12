@@ -187,6 +187,38 @@ class _O:
         self.dto = json
 
 
+# ---------- RBAC + audit ----------
+def test_auth_and_audit(sqlite_db):
+    from darkforce import auth
+    h = auth.hash_password("hunter2")
+    assert auth.verify_password("hunter2", h) and not auth.verify_password("wrong", h)
+    sqlite_db.ensure_admin("boss", h)
+    u = sqlite_db.get_user("boss")
+    assert u["role"] == "admin"
+    t = auth.issue_token("boss", "admin", ttl=30)
+    who = auth.parse_token(t)
+    assert who["username"] == "boss" and who["role"] == "admin"
+    assert auth.parse_token(t + "x") is None
+    sqlite_db.log_audit("boss", "admin", "POST", "/api/refresh", 200)
+    rows = sqlite_db.audit_logs()
+    assert rows[0]["path"] == "/api/refresh" and rows[0]["username"] == "boss"
+
+
+# ---------- telegram guard + pdf report ----------
+def test_telegram_guard_requires_env():
+    from darkforce.seeds import collect_telegram
+    assert collect_telegram(channels="@somechannel") == []  # no TG_API_ID/HASH -> no-op
+
+
+def test_pdf_report_builds():
+    from darkforce.export import report_pdf
+    meta = {"title": "Test", "classification": "UNCLASSIFIED",
+            "verdict": {"confidence": 0.91, "basis": "shared PGP key"},
+            "coverage": "2 actors, 3 sites"}
+    data = report_pdf(meta, records=[{"handle": "a", "score": 0.9}, {"handle": "b", "score": 0.2}])
+    assert data[:4] == b"%PDF" and len(data) > 800
+
+
 # ---------- postgres (only when DATABASE_URL is set) ----------
 @pytest.mark.skipif(not DATABASE_URL, reason="DATABASE_URL not set")
 def test_postgres_roundtrip():

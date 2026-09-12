@@ -1,6 +1,25 @@
 import os
 import socket
 
+
+def _load_env():
+    """Minimal stdlib .env loader (KEY=VALUE lines). No external dep needed;
+    real process env always wins over the file."""
+    envf = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), ".env")
+    if not os.path.exists(envf):
+        return
+    for line in open(envf, encoding="utf-8", errors="replace"):
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        k, _, v = line.partition("=")
+        k, v = k.strip(), v.strip().strip("\"'")
+        if k and k not in os.environ:
+            os.environ[k] = v
+
+
+_load_env()
+
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DATA_DIR = os.path.join(BASE_DIR, "data")
 DB_PATH = os.path.join(DATA_DIR, "darkforce.db")
@@ -13,7 +32,16 @@ os.makedirs(RAW_DIR, exist_ok=True)
 #   postgresql://darkforce:darkforce_dev@localhost:5432/darkforce
 DATABASE_URL = os.getenv("DATABASE_URL", "")
 
-TOR_PROXY = "socks5h://127.0.0.1:9050"
+# Tor endpoint. In a Docker compose deployment Tor runs as a sidecar container
+# reachable as socks5h://tor:9050; locally the app spawns (or uses) 127.0.0.1.
+TOR_PROXY = os.getenv("TOR_EXTERNAL", "socks5h://127.0.0.1:9050")
+TOR_HOST = os.getenv("TOR_HOST", "127.0.0.1")
+TOR_PORT = int(os.getenv("TOR_PORT", "9050"))
+
+# RBAC / sessions. SECRET_KEY signs the bearer tokens issued at /api/login.
+SECRET_KEY = os.getenv("SECRET_KEY", "darkforce-dev-secret-change-me")
+ADMIN_USER = os.getenv("ADMIN_USER", "admin")
+ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "darkforce-admin")
 
 
 def tor_available(host="127.0.0.1", port=9050, timeout=2.0):

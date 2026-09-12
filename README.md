@@ -11,13 +11,38 @@ Autonomous OSINT platform for the SIH (NTRO) problem statement #26151: collect f
 ## Quick start
 ```bash
 pip install -r requirements.txt
+cp .env.example .env          # optional: postgres URL, SECRET_KEY, admin password, telegram creds
 python run.py --demo           # seed demo dataset + start dashboard at http://localhost:8000
 python run.py --live           # pull live onion seeds from clearnet APIs (+ --demo to combine)
 python -m darkforce.setup_pg   # provision a project-local PostgreSQL cluster (port 5433)
 $env:DATABASE_URL="postgresql://darkforce@127.0.0.1:5433/darkforce"
 python run.py --demo --daemon --interval 10   # autonomous collection loop every 10 min
+python demo_flow.py            # full pipeline demo + CSV/JSON/PDF report in data/
 # dashboard: http://localhost:8000  ·  interactive graph: http://localhost:8000/graph?min_conf=0.6
 ```
+
+## One-command deployment (Docker)
+```bash
+docker compose up --build
+# app on :8000, PostgreSQL + Tor sidecar containers, DATABASE_URL + TOR_EXTERNAL pre-wired
+```
+
+## Authentication & audit (RBAC)
+- `POST /api/login` issues a signed bearer token; roles: `viewer` / `analyst` / `admin`.
+- Read endpoints stay open for the demo dashboard; **mutating + admin endpoints** (`/api/refresh`,
+  `/api/scan`, `/api/collect`, `/api/watchlist`, `/api/users`, `/api/audit`) require a token.
+- Every `/api/*` request is written to the `audit_log` table (user, role, method, path, status, ts).
+- First-run admin is seeded from `ADMIN_USER`/`ADMIN_PASSWORD` (see `.env.example`); credentials
+  are stored as salted PBKDF2, tokens are HMAC-signed with `SECRET_KEY`.
+
+## Reports
+`/api/export?fmt=pdf` (token required) produces an analyst-grade report: cover page with
+classification, attribution verdict with confidence, coverage summary, evidence table, and method
+notes. `python demo_flow.py` drops `data/demo_report.pdf` without a server.
+
+## Optional Telegram ingestion
+Set `TG_API_ID` + `TG_API_HASH` (+ `TG_CHANNELS=@ch1,@ch2`) in `.env` to add public Telegram channel
+posts as a live collection source. No-ops cleanly when unset or without `pip install telethon`.
 
 ## Production patterns (implemented)
 - **Database is pluggable** — `DATABASE_URL` unset uses zero-config SQLite (WAL mode); set it to `postgresql://…` to switch the whole app to PostgreSQL. `python -m darkforce.setup_pg` boots a private cluster you own (no admin/password). One-time migration of an existing SQLite store: `python -m darkforce.db.migrate` (via `from darkforce.db import migrate`).
@@ -28,10 +53,14 @@ python run.py --demo --daemon --interval 10   # autonomous collection loop every
 ## Layout
 ```
 darkforce/        core engine (db sqlite+pg drivers, extract, detect, link, stylo, seeds, net, api, export, setup_pg)
+darkforce/auth.py RBAC (PBKDF2 + HMAC tokens), FastAPI guards, audit middleware
 darkforce/web/    React dashboard (search, graph, timeline, infra findings)
 demos/            seed_demo.py (synthetic lab: markets, rebranded vendors, planted leaks)
-tests/            pytest smoke suite (extraction, findings, stylo, dual-backend DB, exports, watchlists)
+tests/            pytest smoke suite (extraction, findings, stylo, dual-backend DB, exports, watchlists, RBAC)
 data/             SQLite/PG store + raw snapshots
+demo_flow.py      full-pipeline demo: seed -> crawl -> merge -> CSV/JSON/PDF report
+Dockerfile        ./docker-compose.yml: app + postgres + tor sidecar, one command
+.env.example      secrets template (postgres URL, SECRET_KEY, admin creds, telegram)
 ```
 
 ## OPSEC & legal posture

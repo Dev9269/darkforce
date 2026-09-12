@@ -1,0 +1,9 @@
+__pycache__/
+*.pyc
+.git/
+data/
+.env
+vendor/tor/tor-expert-bundle.tar.gz
+tests/
+demos/
+node_modules/

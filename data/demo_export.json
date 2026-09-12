@@ -1,0 +1,228 @@
+[
+  {
+    "id": 19,
+    "canon": "Shad0wVendor",
+    "category": "market",
+    "confidence": 0.97,
+    "first_seen": "2026-09-12T06:49:26+00:00",
+    "last_seen": "2026-09-12T06:49:26+00:00",
+    "bio": "",
+    "risk": "merged_alias"
+  },
+  {
+    "id": 20,
+    "canon": "GhostRunner",
+    "category": "market",
+    "confidence": 0.87,
+    "first_seen": "2026-09-12T06:49:26+00:00",
+    "last_seen": "2026-09-12T06:49:26+00:00",
+    "bio": "",
+    "risk": "open"
+  },
+  {
+    "id": 21,
+    "canon": "QuietMule",
+    "category": "forum",
+    "confidence": 0.82,
+    "first_seen": "2026-09-12T06:49:26+00:00",
+    "last_seen": "2026-09-12T06:49:26+00:00",
+    "bio": "",
+    "risk": "open"
+  },
+  {
+    "id": 286,
+    "actor_id": 19,
+    "handle": "Shad0wVendor",
+    "kind": "pgp",
+    "value": "C5ED 1FC5 D91C B512 B35A E480 B456 0B6E F009 1C87",
+    "detail": "shadow_official key",
+    "site_id": null,
+    "url": "",
+    "first_seen": "2026-09-12T06:49:26+00:00",
+    "last_seen": "2026-09-12T06:49:26+00:00"
+  },
+  {
+    "id": 287,
+    "actor_id": 19,
+    "handle": "Shad0wVendor",
+    "kind": "pgp_email",
+    "value": "shadow_official@protonmail.com",
+    "detail": "UID on PGP key",
+    "site_id": null,
+    "url": "",
+    "first_seen": "2026-09-12T06:49:26+00:00",
+    "last_seen": "2026-09-12T06:49:26+00:00"
+  },
+  {
+    "id": 288,
+    "actor_id": 19,
+    "handle": "Shad0wVendor",
+    "kind": "btc",
+    "value": "bc1qxy2kgdygjrsqtzq2n0yrf2493p83kkfjhx0wlh",
+    "detail": "donations/withdrawals wallet",
+    "site_id": null,
+    "url": "",
+    "first_seen": "2026-09-12T06:49:26+00:00",
+    "last_seen": "2026-09-12T06:49:26+00:00"
+  },
+  {
+    "id": 289,
+    "actor_id": 19,
+    "handle": "Shad0wVendor",
+    "kind": "jabber",
+    "value": "shadow_official@jabber.exploit",
+    "detail": "order contact",
+    "site_id": null,
+    "url": "",
+    "first_seen": "2026-09-12T06:49:26+00:00",
+    "last_seen": "2026-09-12T06:49:26+00:00"
+  },
+  {
+    "id": 290,
+    "actor_id": 19,
+    "handle": "Shad0wVendor",
+    "kind": "onion",
+    "value": "http://shadowcust5xyz7plbm2a4dmu3qpwku2f.onion",
+    "detail": "customer vault service",
+    "site_id": null,
+    "url": "",
+    "first_seen": "2026-09-12T06:49:26+00:00",
+    "last_seen": "2026-09-12T06:49:26+00:00"
+  },
+  {
+    "id": 291,
+    "actor_id": 19,
+    "handle": "Cyph3rKing",
+    "kind": "pgp",
+    "value": "C5ED 1FC5 D91C B512 B35A E480 B456 0B6E F009 1C87",
+    "detail": "shadow_official key",
+    "site_id": null,
+    "url": "",
+    "first_seen": "2026-09-12T06:49:26+00:00",
+    "last_seen": "2026-09-12T06:49:26+00:00"
+  },
+  {
+    "id": 292,
+    "actor_id": 19,
+    "handle": "Cyph3rKing",
+    "kind": "btc",
+    "value": "bc1qxy2kgdygjrsqtzq2n0yrf2493p83kkfjhx0wlh",
+    "detail": "donations/withdrawals wallet",
+    "site_id": null,
+    "url": "",
+    "first_seen": "2026-09-12T06:49:26+00:00",
+    "last_seen": "2026-09-12T06:49:26+00:00"
+  },
+  {
+    "id": 293,
+    "actor_id": 19,
+    "handle": "Cyph3rKing",
+    "kind": "onion",
+    "value": "http://shadowcust5xyz7plbm2a4dmu3qpwku2f.onion",
+    "detail": "customer vault service",
+    "site_id": null,
+    "url": "",
+    "first_seen": "2026-09-12T06:49:26+00:00",
+    "last_seen": "2026-09-12T06:49:26+00:00"
+  },
+  {
+    "id": 294,
+    "actor_id": 20,
+    "handle": "GhostRunner",
+    "kind": "pgp",
+    "value": "99CE 3905 EBED 748C 1165 D0BF 0924 4554 7314 7CE2",
+    "detail": "GHOST-A key",
+    "site_id": null,
+    "url": "",
+    "first_seen": "2026-09-12T06:49:26+00:00",
+    "last_seen": "2026-09-12T06:49:26+00:00"
+  },
+  {
+    "id": 295,
+    "actor_id": 20,
+    "handle": "GhostRunner",
+    "kind": "btc",
+    "value": "1BoatSLRHtKNngkdXEeobR76b53LETtpyT",
+    "detail": "withdrawals",
+    "site_id": null,
+    "url": "",
+    "first_seen": "2026-09-12T06:49:26+00:00",
+    "last_seen": "2026-09-12T06:49:26+00:00"
+  },
+  {
+    "id": 296,
+    "actor_id": 20,
+    "handle": "GhostRunner",
+    "kind": "xmr",
+    "value": "8Bsz7X4myiTW8j2ohTyQfS1RZJYAV6xKqhZfPkUzKpZod7CwJxzsZ1nQh3JzB7VjRqB2Mx4uYbQaR6wSmN8qKXp0vM9jTz2wRkYbPqXfD8R2yNmR4kVgHm6CcY",
+    "detail": "primary pay-in",
+    "site_id": null,
+    "url": "",
+    "first_seen": "2026-09-12T06:49:26+00:00",
+    "last_seen": "2026-09-12T06:49:26+00:00"
+  },
+  {
+    "id": 297,
+    "actor_id": 21,
+    "handle": "QuietMule",
+    "kind": "email",
+    "value": "quietmule@protonmail.com",
+    "detail": "contact",
+    "site_id": null,
+    "url": "",
+    "first_seen": "2026-09-12T06:49:26+00:00",
+    "last_seen": "2026-09-12T06:49:26+00:00"
+  },
+  {
+    "id": 298,
+    "actor_id": 21,
+    "handle": "QuietMule",
+    "kind": "telegram",
+    "value": "qm_bulk01",
+    "detail": "bulk buyer channel",
+    "site_id": null,
+    "url": "",
+    "first_seen": "2026-09-12T06:49:26+00:00",
+    "last_seen": "2026-09-12T06:49:26+00:00"
+  },
+  {
+    "kind": null,
+    "value": null,
+    "site_url": "http://alphanex6x2k7hzvab4evqudqnixx.onion/server-status",
+    "finding_kind": "server_status",
+    "severity": "critical",
+    "detail": "Apache mod_status exposed; backend IPs leaked: 10.10.0.12, 10.10.0.5, 127.0.0.1"
+  },
+  {
+    "kind": null,
+    "value": null,
+    "site_url": "http://alphanex6x2k7hzvab4evqudqnixx.onion",
+    "finding_kind": "server_banner",
+    "severity": "medium",
+    "detail": "Default server banner exposed: nginx/1.18.0 (Ubuntu)"
+  },
+  {
+    "kind": null,
+    "value": null,
+    "site_url": "http://alphanex6x2k7hzvab4evqudqnixx.onion",
+    "finding_kind": "favicon_match",
+    "severity": "critical",
+    "detail": "Favicon hash matches clearnet host: https://corporate-dev.example.com"
+  },
+  {
+    "kind": null,
+    "value": null,
+    "site_url": "http://alphanex6x2k7hzvab4evqudqnixx.onion",
+    "finding_kind": "banner_match",
+    "severity": "high",
+    "detail": "Server banner identical to clearnet host corporate-dev.example.com"
+  },
+  {
+    "kind": null,
+    "value": null,
+    "site_url": "http://alphanex6x2k7hzvab4evqudqnixx.onion",
+    "finding_kind": "tls_cert",
+    "severity": "high",
+    "detail": "TLS cert CN=cert.dev-cloud.example.com (clearweb domain)"
+  }
+]
