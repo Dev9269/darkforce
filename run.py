@@ -20,8 +20,8 @@ def run_pass(db, tor, max_sites=30, verbose=True):
 
     if verbose:
         print("[live] seeding...")
-    for s in ("clearnet", "directory", "urlhaus", "onionoo", "darkfail",
-          "ahmia", "ransomware", "telegram"):
+    for s in ("directory", "darkfail", "onionoo", "ahmia", "ransomware",
+              "telegram", "clearnet", "urlhaus"):
         try:
             items = seeds.collect_source(s)
             db.log_source_health(s, ok=True)
@@ -53,9 +53,10 @@ def run_pass(db, tor, max_sites=30, verbose=True):
               f"crawling {len(crawlable)} clearnet site(s)")
 
     if verbose:
-        print(f"[live] crawling {len(crawlable)} new site(s) (use_tor={tor})...")
+        print(f"[live] crawling {len(crawlable)} new site(s)...")
     for i, url in enumerate(crawlable, 1):
-        r = crawl_and_ingest(db, url, use_tor=tor)
+        needs_tor = ".onion" in (urlparse(url).hostname or "") and tor
+        r = crawl_and_ingest(db, url, use_tor=needs_tor)
         if r.get("skipped"):
             totals["skipped"] += 1
         if r["error"]:
