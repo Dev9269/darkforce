@@ -158,6 +158,35 @@ def test_export_pdf():
     assert data.startswith(b"%PDF")
 
 
+# ---------- watchlists / alerts / health ----------
+def test_watchlist_alerts_and_sqlite(sqlite_db):
+    sqlite_db.add_watchlist("Creds", "password", "all")
+    sqlite_db.add_watchlist("Disabled", "zzz", "all")
+    sqlite_db.exe("UPDATE watchlists SET enabled=0 WHERE name='Disabled'")
+    hits = sqlite_db.evaluate_watchlists("leaked password=admin123", url="http://x.onion")
+    assert "Creds" in hits and "Disabled" not in hits
+    al = sqlite_db.alerts()
+    assert al and al[0]["title"] == "Creds"
+    assert sqlite_db.latest_alert_id() == al[0]["id"]
+    assert sqlite_db.alerts_since(al[0]["id"] - 1)
+
+
+def test_health_tracking(sqlite_db):
+    sqlite_db.log_source_health("ahmia", ok=True)
+    sqlite_db.log_source_health("ahmia", ok=True)
+    sqlite_db.log_source_health("darkfail", ok=False, detail="conn reset")
+    h = {r["source"]: r for r in sqlite_db.collector_health()}
+    assert h["ahmia"]["success_count"] == 2
+    assert h["darkfail"]["error_count"] == 1
+    assert "ahmia" in sqlite_db.healthy_sources() and "darkfail" not in sqlite_db.healthy_sources()
+
+
+class _O:
+    def __init__(self):
+        import json
+        self.dto = json
+
+
 # ---------- postgres (only when DATABASE_URL is set) ----------
 @pytest.mark.skipif(not DATABASE_URL, reason="DATABASE_URL not set")
 def test_postgres_roundtrip():

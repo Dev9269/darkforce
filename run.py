@@ -23,7 +23,9 @@ def run_pass(db, tor, max_sites=30, verbose=True):
     for s in ("clearnet", "directory", "ahmia", "darkfail", "ransomware"):
         try:
             items = seeds.collect_source(s)
+            db.log_source_health(s, ok=True)
         except Exception as e:
+            db.log_source_health(s, ok=False, detail=str(e))
             print(f"[live] {s}: seed error: {e}")
             continue
         n = 0

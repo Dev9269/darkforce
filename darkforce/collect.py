@@ -142,6 +142,16 @@ def crawl_and_ingest(db, url, use_tor=False, timeout=20):
     except Exception as e:
         log("WARN {} scan/findings: {}", url, e)
 
+    # watchlist alerting on new findings
+    try:
+        for kind, sev, detail, conf in findings:
+            try:
+                db.evaluate_watchlists(detail, url=url, kind=kind)
+            except Exception:
+                pass
+    except Exception:
+        pass
+
     host = (urlparse(url).hostname or "")
     if host.endswith(".onion"):
         try:

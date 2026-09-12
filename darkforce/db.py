@@ -27,6 +27,43 @@ def days_ago(n):
     return iso(datetime.now(timezone.utc) - timedelta(days=n))
 
 
+_EXTRA_SCHEMA = """
+CREATE TABLE IF NOT EXISTS watchlists (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  name TEXT, pattern TEXT, kind TEXT, enabled INTEGER DEFAULT 1,
+  created_at TEXT
+);
+CREATE TABLE IF NOT EXISTS alerts (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  kind TEXT, title TEXT, detail TEXT, url TEXT,
+  confidence REAL DEFAULT 0, created_at TEXT
+);
+CREATE TABLE IF NOT EXISTS collector_health (
+  source TEXT PRIMARY KEY,
+  success_count INTEGER DEFAULT 0, error_count INTEGER DEFAULT 0,
+  last_success TEXT, last_error TEXT, last_error_detail TEXT
+);
+"""
+
+PG_EXTRA_SCHEMA = """
+CREATE TABLE IF NOT EXISTS watchlists (
+  id BIGSERIAL PRIMARY KEY,
+  name TEXT, pattern TEXT, kind TEXT, enabled INTEGER DEFAULT 1,
+  created_at TEXT
+);
+CREATE TABLE IF NOT EXISTS alerts (
+  id BIGSERIAL PRIMARY KEY,
+  kind TEXT, title TEXT, detail TEXT, url TEXT,
+  confidence REAL DEFAULT 0, created_at TEXT
+);
+CREATE TABLE IF NOT EXISTS collector_health (
+  source TEXT PRIMARY KEY,
+  success_count INTEGER DEFAULT 0, error_count INTEGER DEFAULT 0,
+  last_success TEXT, last_error TEXT, last_error_detail TEXT
+);
+"""
+
+
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS sources (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -73,7 +110,7 @@ CREATE INDEX IF NOT EXISTS ix_ident_value ON identifiers(value);
 CREATE UNIQUE INDEX IF NOT EXISTS ux_ident ON identifiers(handle, kind, value);
 CREATE INDEX IF NOT EXISTS ix_handles_h ON handles(handle);
 CREATE INDEX IF NOT EXISTS ix_posts_h ON posts(handle);
-"""
+""" + _EXTRA_SCHEMA
 
 PG_SCHEMA = """
 CREATE TABLE IF NOT EXISTS sources (
@@ -121,7 +158,7 @@ CREATE INDEX IF NOT EXISTS ix_ident_value ON identifiers(value);
 CREATE UNIQUE INDEX IF NOT EXISTS ux_ident ON identifiers(handle, kind, value);
 CREATE INDEX IF NOT EXISTS ix_handles_h ON handles(handle);
 CREATE INDEX IF NOT EXISTS ix_posts_h ON posts(handle);
-"""
+""" + PG_EXTRA_SCHEMA
 
 try:
     import psycopg2
@@ -358,6 +395,78 @@ class BaseDB:
             "handles": self.handles_for_actor(actor_id),
             "n_posts": self.one("SELECT COUNT(*) c FROM posts p JOIN handles h ON h.handle=p.handle WHERE h.actor_id=?", (actor_id,))["c"],
         }
+
+    # ---------- watchlists / alerts ----------
+    def add_watchlist(self, name, pattern, kind="all"):
+        self.exe(
+            "INSERT INTO watchlists(name,pattern,kind,enabled,created_at) VALUES(?,?,?,1,?)",
+            (name, pattern, kind, utcnow()),
+        )
+
+    def list_watchlists(self):
+        return [dict(r) for r in self.q(
+            "SELECT * FROM watchlists ORDER BY enabled DESC, id")]
+
+    def delete_watchlist(self, wid):
+        self.exe("DELETE FROM watchlists WHERE id=?", (wid,))
+
+    def alerts(self, limit=100):
+        return [dict(r) for r in self.q(
+            "SELECT * FROM alerts ORDER BY created_at DESC LIMIT ?", (limit,))]
+
+    def alerts_since(self, aid):
+        return [dict(r) for r in self.q(
+            "SELECT * FROM alerts WHERE id>? ORDER BY id", (aid,))]
+
+    def latest_alert_id(self):
+        r = self.one("SELECT MAX(id) m FROM alerts")
+        return r["m"] or 0
+
+    def evaluate_watchlists(self, text, url="", kind="all"):
+        """Match free text against watchlist patterns -> returns + records alerts."""
+        import re
+
+        hits, ids = [], self.list_watchlists()
+        for w in ids:
+            if not w["enabled"]:
+                continue
+            if kind != "all" and w["kind"] not in ("all", kind):
+                continue
+            try:
+                if re.search(re.escape(w["pattern"]), text, re.I):
+                    self.exe(
+                        "INSERT INTO alerts(kind,title,detail,url,confidence,created_at) "
+                        "VALUES(?,?,?,?,?,?)",
+                        (w["kind"], w["name"], text[:300], url, 0.8, utcnow()))
+                    hits.append(w["name"])
+            except Exception:
+                continue
+        return hits
+
+    def log_source_health(self, source, ok, detail=""):
+        col = "success_count" if ok else "error_count"
+        ts = utcnow()
+        if ok:
+            self.exe(
+                "INSERT INTO collector_health(source,success_count,error_count,last_success,last_error,last_error_detail) "
+                "VALUES(?,1,0,?,NULL,'') "
+                "ON CONFLICT(source) DO UPDATE SET success_count=collector_health.success_count+1, last_success=?",
+                (source, ts, ts))
+        else:
+            self.exe(
+                "INSERT INTO collector_health(source,success_count,error_count,last_success,last_error,last_error_detail) "
+                "VALUES(?,0,1,NULL,?,?) "
+                "ON CONFLICT(source) DO UPDATE SET error_count=collector_health.error_count+1, last_error=?, last_error_detail=?",
+                (source, ts, detail, ts, detail))
+
+    def collector_health(self):
+        return [dict(r) for r in self.q(
+            "SELECT * FROM collector_health ORDER BY source")]
+
+    def healthy_sources(self):
+        """Sources whose last fetch succeeded (usable for autonomous polling)."""
+        return [r["source"] for r in self.q(
+            "SELECT source FROM collector_health WHERE last_success IS NOT NULL")]
 
 
 class SQLiteDB(BaseDB):

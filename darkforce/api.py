@@ -1,3 +1,4 @@
+import json
 import os
 import uuid
 from typing import Optional
@@ -172,7 +173,12 @@ def _collect_job(job_id, source, want_tor):
         else:
             use_tor = False
         COLLECT_JOBS[job_id]["use_tor"] = use_tor
-        items = seeds.collect_source(source)
+        try:
+            items = seeds.collect_source(source)
+            db.log_source_health(source, ok=True)
+        except Exception as e:
+            db.log_source_health(source, ok=False, detail=str(e))
+            raise
         new_urls = []
         for it in items:
             url = it["url"]
@@ -242,6 +248,65 @@ def api_export(fmt: str = "json", q: str = "", kind: str = "all", title: str = "
 @app.get("/api/findings/{site_id}")
 def site_findings(site_id: int):
     return db.findings_for_site(site_id)
+
+
+class WatchReq(BaseModel):
+    name: str
+    pattern: str
+    kind: str = "all"
+
+
+@app.get("/api/watchlist")
+def watchlist_list():
+    return db.list_watchlists()
+
+
+@app.post("/api/watchlist")
+def watchlist_add(req: WatchReq):
+    db.add_watchlist(req.name, req.pattern, req.kind)
+    return {"added": req.name}
+
+
+@app.delete("/api/watchlist/{wid}")
+def watchlist_del(wid: int):
+    db.delete_watchlist(wid)
+    return {"deleted": wid}
+
+
+@app.get("/api/alerts")
+def alerts(limit: int = 100):
+    return db.alerts(limit)
+
+
+def event_stream():
+    import asyncio
+    import time
+
+    try:
+        yield ": connected\n\n"
+        last = db.latest_alert_id()
+        while True:
+            fresh = db.alerts_since(last)
+            for a in fresh:
+                last = max(last, a["id"])
+                yield f"data: {json.dumps(a)}\n\n"
+            time.sleep(2)
+    except asyncio.CancelledError:
+        raise
+    except GeneratorExit:
+        return
+
+
+@app.get("/api/alerts/stream")
+def alerts_stream():
+    from fastapi.responses import StreamingResponse
+
+    return StreamingResponse(event_stream(), media_type="text/event-stream")
+
+
+@app.get("/api/health/collectors")
+def collector_health():
+    return db.collector_health()
 
 
 app.mount("/", StaticFiles(directory=WEB_DIR, html=True), name="web")
