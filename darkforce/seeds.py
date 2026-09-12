@@ -6,7 +6,10 @@ import time
 import requests
 from bs4 import BeautifulSoup
 
+from .categories import classify_site
+
 ONION_V3 = re.compile(r"\b[a-z2-7]{56}\.onion\b")
+ONION_ANY = re.compile(r"\b(?:[a-z2-7]{16,56})\.onion\b")
 
 # Dark.fail verified addresses (Sept 2026) and other known fixtures - fallback when offline.
 ONION_DIRECTORY = [
@@ -34,22 +37,48 @@ def _get(url, params=None, proxies=None, timeout=15, headers=None):
 
 
 def collect_ahmia(queries=("market vendor", "dump", "database", "combo list")):
+    """Ahmia.fi onion discovery.
+
+    Ahmia's clearnet search fixture now requires a Tor-boundary session, so
+    clearnet attempts degrade gracefully (return []). When the caller passes a
+    Tor proxy (requests `proxies=`) we can still harvest list items.
+    """
     out = []
     for q in queries:
-        r = _get("https://ahmia.fi/search/", params={"q": q})
-        if not r or r.status_code != 200:
+        params = {"q": q}
+        try:
+            seed = _get("https://ahmia.fi/search/", params=params)
+        except Exception:
+            seed = None
+        if not seed or seed.status_code != 200:
             continue
         try:
-            soup = BeautifulSoup(r.text, "html.parser")
-            for a in soup.select("li.result a[href]"):
+            soup = BeautifulSoup(seed.text, "html.parser")
+            for a in soup.select("li.result a[href], ul#results li a, li a[href*='.onion']"):
                 url = a.get("href", "")
                 if ".onion" in url:
                     link = ("https://ahmia.fi" + url) if url.startswith("/") else url
-                    out.append({"title": a.get_text(" ", strip=True)[:200],
-                                "url": link, "category": "search"})
+                    title = a.get_text(" ", strip=True)[:200] or "ahmia listed"
+                    out.append({"title": title, "url": link, "category": "directory",
+                                "purpose": classify_site(title, link)})
         except Exception:
             pass
         time.sleep(0.5)
+    if out:
+        return out
+    # Clearnet/Ahmia search is now session-bound; fall back to the public index pages.
+    for page in ("/blacklist/", "/about/"):
+        r = _get("https://ahmia.fi" + page)
+        if not r or ".onion" not in r.text:
+            continue
+        seen = set()
+        for m in ONION_ANY.finditer(r.text.lower()):
+            u = m.group(0)
+            if u not in seen:
+                seen.add(u)
+                link = "http://" + u
+                out.append({"title": f"ahmia {page.strip('/')} listed", "url": link,
+                            "category": "directory", "purpose": classify_site("", link)})
     return out
 
 
@@ -69,32 +98,134 @@ def collect_darkfail():
         u = m.group(0)
         if u not in seen:
             seen.add(u)
-            out.append({"title": "dark.fail listed", "url": "http://" + u, "category": "directory"})
+            link = "http://" + u
+            out.append({"title": "dark.fail listed", "url": link, "category": "directory",
+                        "purpose": classify_site("", link)})
     return out
 
 
 def collect_ransomware(api_key=""):
-    """Leak-site candidates from ransomware.live (clearnet homepage -> onion leak sites when present)."""
+    """Leak-site candidates from ransomware.live.
+
+    The old clearnet JSON API (`/v2/payloads`, `/v2/groups`) was retired and
+    now returns the SPA (404/HTML). We degrade gracefully: try each known
+    endpoint, extract .onion addresses we actually see. Requires no key.
+    """
     out = []
     h = {"User-Agent": "Mozilla/5.0"}
     if api_key:
         h["X-API-KEY"] = api_key
-    r = _get("https://www.ransomware.live/", headers=h)
+    candidates = [
+        "https://api.ransomware.live/v2/payloads",
+        "https://api.ransomware.live/v2/groups",
+    ]
+    seen = set()
+    for url in candidates:
+        r = _get(url, headers=h)
+        if not r:
+            continue
+        if r.status_code != 200:
+            continue
+        for v in ONION_V3.finditer(r.text.lower()):
+            u = v.group(0)
+            if u not in seen:
+                seen.add(u)
+                link = "http://" + u
+                out.append({"title": "ransomware.live listed", "url": link,
+                            "category": "ransom", "purpose": classify_site("", link)})
+        if any(".onion" not in x["url"] for x in out):
+            break
+    return out
+
+
+def collect_urlhaus(limit=1500, days=1):
+    """URLhaus "recent" CSV -> live malware URLs with threat tags.
+
+    abuse.ch is free, no key required. The CSV is ~12k rows/day; each row is
+    [id, dateadded, url, url_status, threat, threat category, tags, urlhaus ref, reporter].
+    We cap at `limit` so a single pass stays polite, and skip duplicates the
+    DB already knows about at ingest time.
+    """
+    out = []
+    if days <= 0:
+        days = 1
+    csv_url = "https://urlhaus.abuse.ch/downloads/csv_recent/"
+    r = _get(csv_url, headers={"User-Agent": "Mozilla/5.0"}, timeout=None)
     if not r or r.status_code != 200:
         return out
-    seen = set()
-    for v in ONION_V3.finditer(r.text):
-        u = v.group(0).lower()
-        if u not in seen:
-            seen.add(u)
-            out.append({"title": "ransomware.live listed", "url": "http://" + u, "category": "ransom"})
-    return out[:50]
+    try:
+        import csv
+        import io
+
+        reader = csv.reader(io.StringIO(r.text))
+        for row in reader:
+            if not row or row[0].startswith("#"):
+                continue
+            if len(row) < 8:
+                continue
+            url = (row[2] or "").strip()
+            if not url or "://" not in url:
+                continue
+            tags = (row[6] or "").strip()
+            out.append({
+                "title": f"URLhaus ~ {tags or 'unclassified'}: {url[:60]}",
+                "url": url,
+                "category": "malware",
+                "purpose": classify_site(tags, url),
+                "tags": tags,
+            })
+            if len(out) >= limit:
+                break
+    except Exception as e:
+        print(f"[seeds] urlhaus csv parse error: {e}")
+    return out
+
+
+def collect_onionoo(limit=500, min_running=True):
+    """Tor Project Onionoo relay/hidden-service details (free, no key).
+
+    Returns live relay + bridge records keyed by nickname/fingerprint. Hidden
+    services aren't in Onionoo, so this populates the relay/infrastructure
+    register (bandwidth, flags, AS, country) rather than marketplaces.
+    """
+    out = []
+    params = {"limit": min(limit, 500),
+              "fields": "nickname,fingerprint,first_seen,country,as,flags,"
+                        "advertised_bandwidth,platform,running,guard,family"}
+    if min_running:
+        params["running"] = "true"
+    r = _get("https://onionoo.torproject.org/details", params=params,
+             headers={"User-Agent": "Mozilla/5.0"}, timeout=None)
+    if not r or r.status_code != 200:
+        return out
+    try:
+        data = json.loads(r.text)
+    except Exception:
+        return out
+    relays = data.get("relays", [])[:limit]
+    for node in relays:
+        fingerprint = node.get("fingerprint", "")
+        if not fingerprint:
+            continue
+        node_url = f"https://{node.get('nickname', 'tor-relay')}.onion" if isinstance(node.get("nickname"), str) else ""
+        nick = node.get("nickname", "relay")[:60]
+        tags = ",".join(node.get("flags", [])[:4])
+        out.append({
+            "title": f"Tor relay {nick} [{tags}]",
+            "url": fingerprint and f"torrelay:{fingerprint}",
+            "category": "privacy",
+            "purpose": classify_site(nick, "", " ".join(node.get("flags", []))),
+            "tags": tags,
+        })
+    return out
 
 
 CLEARNET_INDEX = [
-    ("Ransomware.live clearnet index", "https://www.ransomware.live/", "ransom"),
+    ("Ransomware.live clearnet index", "https://api.ransomware.live/", "ransom"),
     ("Ahmia clearnet index", "https://ahmia.fi/", "search"),
     ("Dark.fail clearnet status", "https://dark.fail/", "directory"),
+    ("URLhaus malware feed", "https://urlhaus.abuse.ch/downloads/csv_recent/", "malware"),
+    ("Onionoo relay index", "https://onionoo.torproject.org/details", "privacy"),
 ]
 
 
@@ -172,6 +303,10 @@ def collect_source(name):
         return collect_darkfail()
     if name == "ransomware":
         return collect_ransomware()
+    if name == "urlhaus":
+        return collect_urlhaus()
+    if name == "onionoo":
+        return collect_onionoo()
     if name == "telegram":
         return collect_telegram()
     if name == "directory":

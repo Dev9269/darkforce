@@ -94,7 +94,8 @@ CREATE TABLE IF NOT EXISTS sites (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   url TEXT UNIQUE, title TEXT, server TEXT, tech TEXT,
   favicon_hash TEXT, content_hash TEXT, status TEXT,
-  category TEXT, source_id INTEGER, first_seen TEXT, last_scan TEXT
+  category TEXT, source_id INTEGER, first_seen TEXT, last_scan TEXT,
+  lang TEXT
 );
 CREATE TABLE IF NOT EXISTS actors (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -142,7 +143,8 @@ CREATE TABLE IF NOT EXISTS sites (
   id BIGSERIAL PRIMARY KEY,
   url TEXT UNIQUE, title TEXT, server TEXT, tech TEXT,
   favicon_hash TEXT, content_hash TEXT, status TEXT,
-  category TEXT, source_id INTEGER, first_seen TEXT, last_scan TEXT
+  category TEXT, source_id INTEGER, first_seen TEXT, last_scan TEXT,
+  lang TEXT
 );
 CREATE TABLE IF NOT EXISTS actors (
   id BIGSERIAL PRIMARY KEY,
@@ -505,7 +507,7 @@ class BaseDB:
         """Every site with its post count and a body-text digest for purpose
         classification. `digest` is truncated; enough for keyword tagging."""
         rows = [dict(r) for r in self.q(
-            "SELECT s.id, s.url, s.title, s.category, s.server, s.status, s.first_seen, s.last_scan, "
+            "SELECT s.id, s.url, s.title, s.category, s.server, s.status, s.first_seen, s.last_scan, s.lang, "
             "       COUNT(p.id) AS post_count "
             "FROM sites s LEFT JOIN posts p ON p.site_id = s.id "
             "GROUP BY s.id ORDER BY s.last_scan DESC, s.id DESC")]
@@ -550,6 +552,28 @@ class BaseDB:
             return True
         return False
 
+    def _ensure_columns(self):
+        """Additive schema migrations so existing stores keep working after new columns land."""
+        try:
+            cols = [r["name"] for r in self.q("PRAGMA table_info(sites)")]
+        except Exception:
+            try:
+                self.conn.rollback()
+            except Exception:
+                pass
+            try:
+                cols = [r["column_name"] for r in self.q(
+                    "SELECT column_name FROM information_schema.columns WHERE table_name='sites'")]
+            except Exception:
+                cols = []
+        if "lang" in cols:
+            return
+        try:
+            self.exe("ALTER TABLE sites ADD COLUMN lang TEXT")
+            self.q("SELECT lang FROM sites LIMIT 0")  # force PG to plan; harmless on sqlite
+        except Exception:
+            pass
+
     def _now(self):
         import datetime
         return datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds")
@@ -565,6 +589,7 @@ class SQLiteDB(BaseDB):
         self.conn.execute("PRAGMA synchronous=NORMAL")
         self.conn.executescript(SCHEMA)
         self.conn.commit()
+        self._ensure_columns()
 
     def q(self, sql, args=()):
         return self.conn.execute(sql, args).fetchall()
@@ -589,6 +614,7 @@ class PostgresDB(BaseDB):
         with self.conn.cursor() as cur:
             cur.execute(PG_SCHEMA)
         self.conn.commit()
+        self._ensure_columns()
 
     def q(self, sql, args=()):
         with self.conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:

@@ -43,6 +43,10 @@ SECRET_KEY = os.getenv("SECRET_KEY", "darkforce-dev-secret-change-me")
 ADMIN_USER = os.getenv("ADMIN_USER", "admin")
 ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "darkforce-admin")
 
+# Optional threat-intel feed API keys (free tiers; collectors no-op without them).
+ALIENVAULT_OTX_KEY = os.getenv("ALIENVAULT_OTX_KEY", "")
+ABUSEIPDB_KEY = os.getenv("ABUSEIPDB_KEY", "")
+
 
 def tor_available(host="127.0.0.1", port=9050, timeout=2.0):
     """Probe the local Tor SOCKS port. True only if a listener actually answers."""

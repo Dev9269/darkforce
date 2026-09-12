@@ -17,6 +17,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import pytest
 
 from darkforce import detect, extract, stylo
+from darkforce.categories import normalize_category
 from darkforce.config import DATABASE_URL
 from darkforce.db import DB, PostgresDB, SQLiteDB
 from darkforce.export import export
@@ -220,6 +221,30 @@ def test_pdf_report_builds():
             "coverage": "2 actors, 3 sites"}
     data = report_pdf(meta, records=[{"handle": "a", "score": 0.9}, {"handle": "b", "score": 0.2}])
     assert data[:4] == b"%PDF" and len(data) > 800
+
+
+# ---------- category taxonomy ----------
+def test_normalize_category_maps_to_canonical():
+    from darkforce.categories import CANONICAL, normalize_category
+    assert normalize_category("financial") == "financial/carding"
+    assert normalize_category("privacy") == "privacy/hosting"
+    assert normalize_category("market") == "markets"
+    assert normalize_category("marketplace") == "markets"
+    assert normalize_category("ransom") == "ransomware"
+    assert normalize_category("directory") == "directories"
+    assert normalize_category("clearnet") == "other"
+    assert normalize_category("forum") == "other"
+    assert normalize_category("") == "other"
+    for c in CANONICAL:
+        assert normalize_category(c) == c
+
+
+def test_sites_all_exposes_lang_and_normalized_category(sqlite_db):
+    sqlite_db.upsert_site("http://lang-test.onion", title="Kuiper cards",
+                          category=normalize_category("financial"), lang="EN")
+    rows = sqlite_db.sites_all()
+    row = [r for r in rows if r["url"] == "http://lang-test.onion"][0]
+    assert row["lang"] == "EN"
 
 
 # ---------- postgres (only when DATABASE_URL is set) ----------

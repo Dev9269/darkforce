@@ -158,8 +158,28 @@ export interface OperationResponse {
   [key: string]: unknown;
 }
 
+export interface CategoriesResponse {
+  categories?: string[];
+  counts?: Record<string, number>;
+  total?: number;
+}
+
+export interface LiveAlert {
+  id?: string | number;
+  kind?: string;
+  title?: string;
+  detail?: string;
+  url?: string;
+  confidence?: number;
+  created_at?: string;
+  ts?: string;
+  [key: string]: unknown;
+}
+
 export const getStats = () => apiGet<Stats>("/stats");
 export const getSites = () => apiGet<JsonRecord[]>("/sites");
+export const getCategories = () => apiGet<CategoriesResponse>("/categories");
+export const getAlerts = () => apiGet<LiveAlert[]>("/alerts");
 export const getIdentifiers = () => apiGet<Identifier[]>("/identifiers");
 export const getActors = () => apiGet<Actor[]>("/actors");
 export const getSearch = (q: string, kind: string) =>

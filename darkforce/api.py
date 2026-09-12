@@ -153,6 +153,13 @@ def graph(actor_id: int = 0):
     return db.graph(actor_id or None)
 
 
+@app.get("/api/network/analysis")
+def network_analysis():
+    from .graph_analysis import analyze_network
+
+    return analyze_network(db)
+
+
 @app.get("/graph", response_class=Response)
 def graph_view(min_conf: float = 0.0):
     """Standalone interactive entity graph (pyvis/vis.js). Color = node kind,
@@ -236,12 +243,30 @@ def _site_purpose(row):
 
 @app.get("/api/sites")
 def sites_all():
+    from darkforce.categories import normalize_category
     out = []
     for r in db.sites_all():
+        r["category"] = normalize_category(r.get("category") or "other")
         r["purpose"] = _site_purpose(r)
         r.pop("digest", None)
         out.append(r)
     return out
+
+
+@app.get("/api/categories")
+def categories_ref():
+    """Canonical category taxonomy + live counts for the sites-register filter."""
+    import collections
+
+    from darkforce.categories import normalize_category, CANONICAL
+    counts = collections.Counter()
+    for r in db.sites_all():
+        counts[normalize_category(r.get("category") or "other")] += 1
+    return {
+        "categories": CANONICAL,
+        "counts": {c: counts[c] for c in CANONICAL},
+        "total": sum(counts.values()),
+    }
 
 
 @app.get("/api/stylo/{handle}")
@@ -310,7 +335,9 @@ def _collect_job(job_id, source, want_tor):
             url = it["url"]
             if not url or db.site_id(url):
                 continue
-            db.upsert_site(url, title=it.get("title", "")[:200], category=it.get("category", "seed"))
+            from darkforce.categories import normalize_category
+            db.upsert_site(url, title=it.get("title", "")[:200],
+                           category=normalize_category(it.get("category", "seed")))
             new_urls.append(url)
             if len(new_urls) >= (COLLECT_JOBS[job_id].get("cap") or 30):
                 break

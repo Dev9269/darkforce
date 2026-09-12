@@ -1,9 +1,9 @@
-import { useMemo, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import {
   Activity, AlertTriangle, Archive, ArrowUpRight, Check, ChevronRight, CircleHelp, Clipboard, CloudDownload,
-  Database, Download, FileJson, FileText, Fingerprint, Gauge, Globe2, Hash, Link2, LoaderCircle,
+  Database, Download, FileJson, FileText, Fingerprint, Gauge, Globe2, Hash, Link2, LoaderCircle, Radio,
   Network, RefreshCw, Search, ShieldAlert, SlidersHorizontal, Sparkles, Terminal, Timer, UserRound,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -13,8 +13,8 @@ import { Toaster } from "@/components/ui/sonner";
 import GraphCanvas from "@/components/GraphCanvas";
 import { apiDownload } from "@/lib/api";
 import {
-  asArray, clampConfidence, displayHandle, errorText, getActors, getFindings, getGraph, getIdentifiers, getMisconfigs, getSearch,
-  getSites, getStats, getActor, getStylo, getText, getTimeline, normalizeStylo, runCollect, runRefresh, runScan, type Actor, type Finding, type GraphNode, type Identifier, type JsonRecord, type Stats,
+  asArray, clampConfidence, displayHandle, errorText, getActors, getAlerts, getCategories, getFindings, getGraph, getIdentifiers, getMisconfigs, getSearch,
+  getSites, getStats, getActor, getStylo, getText, getTimeline, normalizeStylo, runCollect, runRefresh, runScan, type Actor, type Finding, type GraphNode, type Identifier, type JsonRecord, type LiveAlert, type Stats,
 } from "@/lib/darkforce";
 
 type Severity = "all" | "critical" | "high" | "medium" | "low";
@@ -27,19 +27,22 @@ function valueFromStats(stats: Stats | undefined, keys: string[]): number {
   return 0;
 }
 
-function purposeBadge(purpose?: string) { return <span className={`purpose-tag ${["drugs", "weapons / guns", "hitman / for-hire"].some((k) => purpose?.includes(k)) ? "purpose-danger" : "purpose-ok"}`}>{purpose ?? "unknown"}</span>; }
+function purposeBadge(purpose?: string) { return <span className={`purpose-tag ${["drugs", "weapons / guns", "hitman / for-hire", "weapons"].some((k) => purpose?.includes(k)) ? "purpose-danger" : "purpose-ok"}`}>{purpose ?? "unknown"}</span>; }
 
-function StatDetail({ view, stats, actors, identifiers, sites, findings, onSelectActor, onClose }: { view: "actors" | "identities" | "sites" | "findings"; stats?: Stats; actors?: Actor[]; identifiers?: Identifier[]; sites?: JsonRecord[]; findings?: Finding[]; onSelectActor?: (actor: Actor) => void; onClose?: () => void }) {
+function StatDetail({ view, stats, actors, identifiers, sites, findings, onSelectActor, onClose, categories }: { view: "actors" | "identities" | "sites" | "findings"; stats?: Stats; actors?: Actor[]; identifiers?: Identifier[]; sites?: JsonRecord[]; findings?: Finding[]; onSelectActor?: (actor: Actor) => void; onClose?: () => void; categories?: string[] }) {
   const isActor = view === "actors";
   const isIdentity = view === "identities";
   const isSite = view === "sites";
+  const [categoryFilter, setCategoryFilter] = useState("all");
+
+  const filteredSites = isSite && sites ? (categoryFilter === "all" ? sites : sites.filter((site) => getText(site.category, "other").toLowerCase() === categoryFilter.toLowerCase())) : sites;
 
   const body = isActor ? (
     <QueryState loading={false} error={undefined} empty={!actors?.length} label="actors-list"><div className="inventory-table-wrap"><table className="inventory-table"><thead><tr><th>HANDLE</th><th>CONF</th><th>HANDLES</th><th>POSTS</th><th>CATEGORY</th><th>SEEN</th></tr></thead><tbody>{(actors ?? []).map((actor) => <tr key={String(actor.id)}><td className="inventory-handle"><a href="#" onClick={(e) => { e.preventDefault(); onSelectActor?.(actor); }}>{displayHandle(actor)}</a></td><td className="mono">{formatConfidence(actor.confidence)}</td><td className="mono">{actor.n_handles ?? actor.handles?.length ?? 0}</td><td className="mono">{actor.n_posts ?? actor.posts?.length ?? 0}</td><td>{getText(actor.category ?? actor.kind, "—")}</td><td>{getText(actor.last_seen ?? actor.last_scan, "—")}</td></tr>)}</tbody></table></div></QueryState>
   ) : isIdentity ? (
     <QueryState loading={false} error={undefined} empty={!identifiers?.length} label="identities-list"><div className="inventory-table-wrap"><table className="inventory-table"><thead><tr><th>KIND</th><th>VALUE</th><th>DETAIL</th><th>ACTOR</th><th>SOURCE</th></tr></thead><tbody>{(identifiers ?? []).map((item, index) => <tr key={String(item.id ?? `${item.kind}-${index}`)}><td><span className="severity-dot db-dot" />{getText(item.kind, "id")}</td><td className="mono inventory-value">{getText(item.value)}</td><td className="inventory-detail">{getText(item.detail, "—")}</td><td>{getText(item.actor_canon ?? item.handle, "unattributed")}</td><td className="mono inventory-url">{getText(item.url, "—")}</td></tr>)}</tbody></table></div></QueryState>
   ) : isSite ? (
-    <QueryState loading={false} error={undefined} empty={!sites?.length} label="sites-list"><div className="inventory-table-wrap"><table className="inventory-table"><thead><tr><th>PURPOSE</th><th>URL</th><th>TITLE</th><th>SERVER</th><th>POSTS</th></tr></thead><tbody>{(sites ?? []).map((site) => <tr key={String(site.id)}><td>{purposeBadge(getText(site.purpose))}</td><td className="mono inventory-url"><a href={getText(site.url)} target="_blank" rel="noreferrer">{getText(site.url)}</a></td><td className="inventory-detail">{getText(site.title, "—")}</td><td className="mono">{getText(site.server, "—")}</td><td className="mono">{Number(site.post_count ?? site.n_posts ?? 0)}</td></tr>)}</tbody></table></div></QueryState>
+    <div className="stat-detail-table-stack"><div className="stat-filter-row"><span className="micro-label">CATEGORY FILTER</span><select value={categoryFilter} onChange={(event) => setCategoryFilter(event.target.value)} className="console-select category-filter" aria-label="Filter sites by category" data-testid="site-category-filter"><option value="all">ALL CATEGORIES</option>{(categories ?? []).map((category) => <option key={category} value={category}>{category.toUpperCase()}</option>)}</select><span className="mono category-filter-count">{filteredSites?.length ?? 0} / {sites?.length ?? 0} SITES</span></div><QueryState loading={false} error={undefined} empty={!filteredSites?.length} label="sites-list"><div className="inventory-table-wrap"><table className="inventory-table"><thead><tr><th>PURPOSE</th><th>URL</th><th>TITLE</th><th>SERVER</th><th>POSTS</th></tr></thead><tbody>{(filteredSites ?? []).map((site) => <tr key={String(site.id)}><td>{purposeBadge(getText(site.category, getText(site.purpose, "other")))}</td><td className="mono inventory-url"><a href={getText(site.url)} target="_blank" rel="noreferrer">{getText(site.url)}</a></td><td className="inventory-detail">{getText(site.title, "—")}</td><td className="mono">{getText(site.server, "—")}</td><td className="mono">{Number(site.post_count ?? site.n_posts ?? 0)}</td></tr>)}</tbody></table></div></QueryState></div>
   ) : (
     <QueryState loading={false} error={undefined} empty={!findings?.length} label="findings-list"><div className="inventory-table-wrap"><table className="inventory-table"><thead><tr><th>SEV</th><th>KIND</th><th>DETAIL</th><th>SITE</th><th>CONF</th></tr></thead><tbody>{(findings ?? []).map((finding, index) => <tr key={String(finding.id ?? `${finding.site_id}-${index}`)}><td><span className={`severity-dot sev-${(finding.severity ?? "medium").toLowerCase()}`} />{getText(finding.severity, "—").toUpperCase()}</td><td>{getText(finding.kind ?? finding.title ?? finding.name, "finding")}</td><td className="inventory-detail">{getText(finding.detail ?? finding.evidence, "—")}</td><td className="mono inventory-url">{getText(finding.site_url ?? finding.site, "—")}</td><td className="mono">{(typeof finding.confidence === "number" ? finding.confidence : 0).toFixed(2)}</td></tr>)}</tbody></table></div></QueryState>
   );
@@ -92,8 +95,14 @@ export default function Home() {
   const [refreshing, setRefreshing] = useState(false);
   const [scanUrl, setScanUrl] = useState("");
   const [statView, setStatView] = useState<"actors" | "identities" | "sites" | "findings" | null>(null);
+  const [liveAlerts, setLiveAlerts] = useState<LiveAlert[]>([]);
+  const [sseConnected, setSseConnected] = useState(false);
 
   const statsQuery = useQuery({ queryKey: ["stats"], queryFn: getStats, retry: false });
+  const categoriesQuery = useQuery({ queryKey: ["categories"], queryFn: getCategories, retry: false });
+  const alertsQuery = useQuery({ queryKey: ["alerts"], queryFn: getAlerts, refetchInterval: 30_000, retry: false });
+  const categories = categoriesQuery.data?.categories ?? [];
+  const liveAlertCount = alertsQuery.data?.length ?? 0;
   const allActorsQuery = useQuery({ queryKey: ["actors-all"], queryFn: getActors, enabled: statView === "actors", retry: false });
   const allIdentifiersQuery = useQuery({ queryKey: ["identifiers-all"], queryFn: getIdentifiers, enabled: statView === "identities", retry: false });
   const allSitesQuery = useQuery({ queryKey: ["sites-all"], queryFn: getSites, enabled: statView === "sites", retry: false });
@@ -110,6 +119,29 @@ export default function Home() {
   const styloHandle = profileActor?.canonical_handle ?? profileActor?.handle ?? profileActor?.canon;
   const styloQuery = useQuery({ queryKey: ["stylo", styloHandle], queryFn: () => getStylo(styloHandle!), enabled: Boolean(styloHandle), retry: false });
   const timelineQuery = useQuery({ queryKey: ["timeline", timelineRange], queryFn: () => getTimeline(timelineRange.start, timelineRange.end), retry: false });
+
+  useEffect(() => {
+    const source = new EventSource("/api/alerts/stream");
+    source.onopen = () => setSseConnected(true);
+    source.onerror = () => setSseConnected(false);
+    source.onmessage = (event) => {
+      if (!event.data || event.data.trim().startsWith(":")) return;
+      try {
+        const alert = JSON.parse(event.data) as LiveAlert;
+        setLiveAlerts((current) => {
+          const merged = [alert, ...current];
+          return merged.slice(0, 20);
+        });
+        toast.success(`Live alert: ${getText(alert.title, "Detector fired")}`);
+        void queryClient.invalidateQueries({ queryKey: ["stats"] });
+        void queryClient.invalidateQueries({ queryKey: ["alerts"] });
+        void queryClient.invalidateQueries({ queryKey: ["sites-all"] });
+      } catch {
+        return;
+      }
+    };
+    return () => source.close();
+  }, [queryClient]);
 
   const scanMutation = useMutation({ mutationFn: () => runScan(scanUrl), onSuccess: (response) => { toast.success(getText(response?.message, "Scan completed")); queryClient.invalidateQueries(); }, onError: (error) => toast.error(`Scan failed: ${errorText(error)}`) });
   const collectMutation = useMutation({ mutationFn: runCollect, onSuccess: (response) => { toast.success(getText(response?.message, "Collection completed")); queryClient.invalidateQueries(); }, onError: (error) => toast.error(`Collection failed: ${errorText(error)}`) });
@@ -147,9 +179,9 @@ export default function Home() {
 
   return <div className="console-shell" data-testid="console-shell">
     <Toaster richColors />
-    <header className="console-header" data-testid="console-header"><div className="brand-lockup"><div className="brand-mark"><Terminal size={18} /></div><div><div className="brand-name">DARKFORCE</div><div className="brand-subtitle">NTRO / INVESTIGATOR CONSOLE</div></div></div><div className="header-context"><span className="live-dot" /> <span data-testid="session-state">READ-ONLY PIPELINE</span><span className="header-divider" /><span className="mono" data-testid="utc-clock">UTC / ANALYST VIEW</span></div><div className="header-actions"><Button variant="ghost" size="sm" onClick={refresh} disabled={refreshing} data-testid="refresh-data-button"><RefreshCw size={14} className={refreshing ? "animate-spin" : ""} /> Refresh</Button><Button variant="outline" size="sm" onClick={() => exportReport("pdf")} data-testid="export-report-button"><Download size={14} /> Export report</Button></div></header>
+    <header className="console-header" data-testid="console-header"><div className="brand-lockup"><div className="brand-mark"><Terminal size={18} /></div><div><div className="brand-name">DARKFORCE</div><div className="brand-subtitle">NTRO / INVESTIGATOR CONSOLE</div></div></div><div className="header-context"><span className="live-dot" /> <span data-testid="session-state">READ-ONLY PIPELINE</span><span className="header-divider" /><span className="mono" data-testid="utc-clock">UTC / ANALYST VIEW</span>{sseConnected && <span className="sse-badge live-alerts-badge" data-testid="live-alerts-badge"><Radio size={11} /> LIVE {liveAlerts.length || liveAlertCount} ALERT{(liveAlerts.length || liveAlertCount) === 1 ? "" : "S"}</span>}</div><div className="header-actions"><Button variant="ghost" size="sm" onClick={refresh} disabled={refreshing} data-testid="refresh-data-button"><RefreshCw size={14} className={refreshing ? "animate-spin" : ""} /> Refresh</Button><Button variant="outline" size="sm" onClick={() => exportReport("pdf")} data-testid="export-report-button"><Download size={14} /> Export report</Button></div></header>
     <main className="console-main">
-      <section className="stats-rail" aria-label="Dashboard statistics" data-testid="stats-rail"><div className="section-kicker"><Gauge size={14} /> SYSTEM SNAPSHOT <span className="mono">/ API STATS</span></div><div className="stat-grid"><StatBlock label="Actors" value={valueFromStats(stats, ["actors", "actor_count"])} icon={UserRound} accent="#52e1ec" active={statView === "actors"} onClick={() => toggleStat("actors")} /><StatBlock label="Identities" value={valueFromStats(stats, ["identifiers", "identities", "identity_count", "handles"])} icon={Fingerprint} accent="#86aaff" active={statView === "identities"} onClick={() => toggleStat("identities")} /><StatBlock label="Sites" value={valueFromStats(stats, ["sites", "site_count"])} icon={Globe2} accent="#e3b64d" active={statView === "sites"} onClick={() => toggleStat("sites")} /><StatBlock label="Findings" value={valueFromStats(stats, ["findings", "finding_count", "misconfigs"])} icon={ShieldAlert} accent="#f27960" active={statView === "findings"} onClick={() => toggleStat("findings")} /></div>{statView && <StatDetail view={statView} stats={stats} actors={allActorsQuery.data} identifiers={allIdentifiersQuery.data} sites={allSitesQuery.data} findings={filteredFindings} onSelectActor={selectStatActor} onClose={() => setStatView(null)} />}<div className="provenance-strip" data-testid="source-provenance-strip"><Database size={14} /><span>PROVENANCE</span><strong>{statusLabel(stats?.source_status)}</strong><span className="provenance-detail">{sourceList.length ? sourceList.join(" · ") : getText(stats?.source, "No source reported by API")}</span></div></section>
+      <section className="stats-rail" aria-label="Dashboard statistics" data-testid="stats-rail"><div className="section-kicker"><Gauge size={14} /> SYSTEM SNAPSHOT <span className="mono">/ API STATS</span></div><div className="stat-grid"><StatBlock label="Actors" value={valueFromStats(stats, ["actors", "actor_count"])} icon={UserRound} accent="#52e1ec" active={statView === "actors"} onClick={() => toggleStat("actors")} /><StatBlock label="Identities" value={valueFromStats(stats, ["identifiers", "identities", "identity_count", "handles"])} icon={Fingerprint} accent="#86aaff" active={statView === "identities"} onClick={() => toggleStat("identities")} /><StatBlock label="Sites" value={valueFromStats(stats, ["sites", "site_count"])} icon={Globe2} accent="#e3b64d" active={statView === "sites"} onClick={() => toggleStat("sites")} /><StatBlock label="Findings" value={valueFromStats(stats, ["findings", "finding_count", "misconfigs"])} icon={ShieldAlert} accent="#f27960" active={statView === "findings"} onClick={() => toggleStat("findings")} /></div>{statView && <StatDetail view={statView} stats={stats} actors={allActorsQuery.data} identifiers={allIdentifiersQuery.data} sites={allSitesQuery.data} findings={filteredFindings} onSelectActor={selectStatActor} onClose={() => setStatView(null)} categories={categories} />}<div className="provenance-strip" data-testid="source-provenance-strip"><Database size={14} /><span>PROVENANCE</span><strong>{statusLabel(stats?.source_status)}</strong><span className="provenance-detail">{sourceList.length ? sourceList.join(" · ") : getText(stats?.source, "No source reported by API")}</span></div></section>
       <section className="search-row" data-testid="search-section"><form onSubmit={submitSearch} className="search-form" data-testid="investigator-search-form"><div className="section-kicker"><Search size={14} /> DISCOVER ACTOR / ENTITY</div><div className="search-controls"><div className="search-input-wrap"><Search size={16} /><Input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search handle, identifier, site, or evidence…" aria-label="Search intelligence" data-testid="investigator-search-input" /></div><select value={kind} onChange={(event) => setKind(event.target.value)} className="console-select" aria-label="Search entity type" data-testid="search-kind-select"><option value="actor">ACTOR</option><option value="identity">IDENTITY</option><option value="site">SITE</option><option value="identifier">IDENTIFIER</option></select><Button type="submit" disabled={searchQuery.isFetching} data-testid="investigator-search-submit"><Search size={14} /> Investigate</Button></div></form><div className="action-rail"><div className="section-kicker"><Activity size={14} /> PIPELINE ACTIONS</div><div className="pipeline-buttons"><Input value={scanUrl} onChange={(event) => setScanUrl(event.target.value)} placeholder="URL to scan" aria-label="URL to scan" data-testid="scan-url-input" /><Button variant="outline" onClick={() => scanMutation.mutate()} disabled={!scanUrl.trim() || scanMutation.isPending || collectMutation.isPending} data-testid="scan-pipeline-button">{scanMutation.isPending ? <LoaderCircle className="animate-spin" size={14} /> : <Sparkles size={14} />} Scan</Button><Button variant="outline" onClick={() => collectMutation.mutate()} disabled={collectMutation.isPending || scanMutation.isPending} data-testid="collect-pipeline-button">{collectMutation.isPending ? <LoaderCircle className="animate-spin" size={14} /> : <Archive size={14} />} Collect</Button></div></div></section>
       <div className="dashboard-grid">
         <aside className="left-column"><section className="console-panel actor-list-panel" data-testid="actor-results-panel"><div className="panel-heading"><div><div className="section-kicker"><UserRound size={14} /> TOP ACTORS</div><div className="panel-subtitle">API-ranked candidates / select to inspect</div></div><Badge variant="outline" data-testid="actor-result-count">{topActors.length} returned</Badge></div><QueryState loading={searchQuery.isLoading} error={searchQuery.error} empty={!topActors.length} label="actor-results"><div id="sres" className="actor-results" data-testid="actor-search-results">{topActors.map((actor, index) => <button className={`actor-row ${activeActor?.id === actor.id ? "active" : ""}`} key={actor.id} onClick={() => setSelectedActor(actor)} data-testid={`actor-result-${index + 1}`}><span className="rank mono">0{index + 1}</span><span className="actor-row-copy"><strong>{displayHandle(actor)}</strong><small>{getText(actor.name ?? actor.detail, "API record")}</small></span><span className="actor-row-score mono">{formatConfidence(actor.confidence)}</span><ChevronRight size={14} /></button>)}</div></QueryState></section><section className="console-panel source-panel" data-testid="source-register-panel"><div className="section-kicker"><Link2 size={14} /> SOURCE REGISTER</div><QueryState loading={statsQuery.isLoading} error={statsQuery.error} empty={!sourceList.length && !stats?.source} label="source-register"><div className="source-list">{sourceList.map((source, index) => <div className="source-item" key={source}><span className="source-index mono">0{index + 1}</span><span>{source}</span><span className="source-state">API REPORTED</span></div>)}</div></QueryState></section></aside>

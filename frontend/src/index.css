@@ -2275,6 +2275,50 @@ button:active {
   background: rgba(242, 121, 96, .14);
   border: 1px solid rgba(242, 121, 96, .35);
 }
+.stat-detail-table-stack {
+  display: block;
+}
+.stat-filter-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 14px;
+  border-bottom: 1px solid #26373d;
+}
+.stat-filter-row .micro-label {
+  color: #6e858c;
+}
+.category-filter {
+  min-width: 220px;
+  padding: 6px 8px;
+  font-size: 10px;
+}
+.category-filter-count {
+  margin-left: auto;
+  color: #6e858c;
+  font-size: 10px;
+}
+.sse-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 8px;
+  border-radius: 10px;
+  font-size: 9px;
+  font-weight: 600;
+  letter-spacing: .06em;
+  text-transform: uppercase;
+  color: #5bd6c4;
+  background: rgba(91, 214, 196, .1);
+  border: 1px solid rgba(91, 214, 196, .35);
+}
+.live-alerts-badge {
+  animation: sse-pulse 3s ease-in-out infinite;
+}
+@keyframes sse-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(91, 214, 196, 0); }
+  50% { box-shadow: 0 0 10px 1px rgba(91, 214, 196, .25); }
+}
 .sev-critical, .sev-high { color: #f27960; }
 .sev-medium { color: #e4b350; }
 .sev-low { color: #5bd6c4; }
