@@ -328,9 +328,16 @@ class BaseDB:
         }
 
     def search(self, q, kind="all", start=None, end=None):
-        q = q.strip().lower()
+        q = (q or "").strip().lower()
         res = {"actors": [], "identifiers": [], "sites": []}
         if not q:
+            if kind in ("all", "actor"):
+                res["actors"] = self.all_actors()
+            if kind in ("all", "id", "identifier"):
+                res["identifiers"] = self.all_identifiers()
+            if kind in ("all", "site"):
+                res["sites"] = [dict(r) for r in self.q(
+                    "SELECT * FROM sites ORDER BY last_scan DESC, id DESC")]
             return res
         if kind in ("all", "actor"):
             res["actors"] = [dict(r) for r in self.q(
