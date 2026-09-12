@@ -23,3 +23,5 @@ vendor/tor/tor/pluggable_transports/
 data/pg/
 data/pg.log
 data/tor-managed.log
+darkforce.session
+.tg_auth.json
