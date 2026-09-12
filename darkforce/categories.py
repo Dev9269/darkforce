@@ -19,6 +19,7 @@ CANONICAL = [
     "directories",
     "ransomware",
     "malware",
+    "porn",
     "other",
 ]
 
@@ -30,6 +31,8 @@ _ALIASES = {
     "ransom": "ransomware",
     "directory": "directories",
     "search": "directories",
+    "porn": "porn",
+    "adult": "porn",
     "onion": "other",
     "clearnet": "other",
     "seed": "other",
@@ -53,6 +56,7 @@ RULES = [
     "hacking",
     "drugs",
     "weapons",
+    "porn",
     "financial",
     "crypto",
     "markets",
@@ -111,6 +115,12 @@ KEYWORDS = {
     "malware": [
         r"\bmalware", r"\bmirai", r"\bc2\b", r"\bbotnet",
         r"\bstealer", r"\btrojan", r"\bminer", r"\bmonero.*rce",
+    ],
+    "porn": [
+        r"\bporn\b", r"\bxxx\b", r"\badult\b", r"\bescort", r"\bsex\b",
+        r"\bnsfw\b", r"\bonlyfans\b", r"\bplayboy\b", r"\bcam girl",
+        r"\bcams\b", r"\bnude[sz]?\b", r"\bstripper", r"\bsexting\b",
+        r"\bhentai\b", r"\bblower\b", r"\bwebcam\b", r"\bchild", r"\bcp\b",
     ],
     "directories": [
         r"\bonion", r"\bdirectory", r"\bwiki\b", r"\blink list",
