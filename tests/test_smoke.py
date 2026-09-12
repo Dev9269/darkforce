@@ -256,7 +256,7 @@ def test_postgres_roundtrip():
     assert s["actors"] >= 1 and s["identifiers"] >= 2
     assert pg.graph()["nodes"]
     assert pg.timeline()
-    pg.conn.close()
+    pg.close()
 
 
 if __name__ == "__main__":

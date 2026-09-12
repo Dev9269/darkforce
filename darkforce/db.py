@@ -10,6 +10,7 @@ the rest of the app never cares which backend is active.
 import json
 import os
 import sqlite3
+import threading
 from datetime import datetime, timedelta, timezone
 
 from .config import DB_PATH, DATABASE_URL
@@ -203,6 +204,14 @@ def _pg_sql(sql):
 
 class BaseDB:
     """Shared business methods; drivers only implement q/one/exe/backend bits."""
+
+    def close(self):
+        """Release the current thread's connection(s). Subclasses may override."""
+        if getattr(self, "conn", None) is not None:
+            try:
+                self.conn.close()
+            except Exception:
+                pass
 
     # ---------- upserts ----------
     def upsert_source(self, name, type_, url, notes=""):
@@ -552,15 +561,11 @@ class BaseDB:
             return True
         return False
 
-    def _ensure_columns(self):
+    def _ensure_columns(self, conn=None):
         """Additive schema migrations so existing stores keep working after new columns land."""
         try:
             cols = [r["name"] for r in self.q("PRAGMA table_info(sites)")]
         except Exception:
-            try:
-                self.conn.rollback()
-            except Exception:
-                pass
             try:
                 cols = [r["column_name"] for r in self.q(
                     "SELECT column_name FROM information_schema.columns WHERE table_name='sites'")]
@@ -605,33 +610,104 @@ class SQLiteDB(BaseDB):
 
 
 class PostgresDB(BaseDB):
+    """PostgreSQL driver with per-thread connections.
+
+    psycopg2 connections are not thread-safe, and the app runs uvicorn worker
+    threads alongside a background collection thread and long-lived SSE streams.
+    Instead of one shared `self.conn`, each thread gets its own connection that
+    reconnects lazily if the server dropped it (idle timeout / server restart).
+
+    All schema/migration setup happens on the main thread's connection; new
+    threads just use that schema.
+    """
+
     def __init__(self, dsn=None):
         if psycopg2 is None:
             raise RuntimeError("psycopg2 not installed; DATABASE_URL can't be used")
         self.dsn = dsn or DATABASE_URL
-        self.conn = psycopg2.connect(self.dsn)
-        self.conn.autocommit = False
-        with self.conn.cursor() as cur:
-            cur.execute(PG_SCHEMA)
-        self.conn.commit()
-        self._ensure_columns()
+        self._thread_local = threading.local()
+        with self._conn() as conn:
+            with conn.cursor() as cur:
+                cur.execute(PG_SCHEMA)
+            conn.commit()
+            self._ensure_columns(conn)
+
+    @property
+    def conn(self):
+        """Compatibility accessor so callers using `db.conn` / `db.conn.commit()`
+        keep working on the PostgreSQL driver (resolves to this thread's connection)."""
+        return self._conn()
+
+    def _conn(self):
+        """Return this thread's connection, reconnecting if it is gone/broken."""
+        tls = self._thread_local
+        if getattr(tls, "conn", None) is not None:
+            c = tls.conn
+            try:
+                if c.closed == 0:
+                    return c
+            except Exception:
+                pass
+        tls.conn = psycopg2.connect(self.dsn)
+        tls.conn.autocommit = True
+        return tls.conn
 
     def q(self, sql, args=()):
-        with self.conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
-            cur.execute(_pg_sql(sql), list(args))
-            return cur.fetchall()
+        conn = self._conn()
+        for attempt in (0, 1):
+            try:
+                with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+                    cur.execute(_pg_sql(sql), list(args))
+                    return cur.fetchall()
+            except psycopg2.OperationalError as e:
+                if attempt == 0 and ("closed" in str(e).lower() or "recovery" in str(e).lower()
+                                     or "terminated" in str(e).lower()):
+                    self._drop_conn()
+                    conn = self._conn()
+                    continue
+                raise
 
     def one(self, sql, args=()):
-        with self.conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
-            cur.execute(_pg_sql(sql), list(args))
-            r = cur.fetchone()
-            return dict(r) if r else None
+        conn = self._conn()
+        for attempt in (0, 1):
+            try:
+                with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+                    cur.execute(_pg_sql(sql), list(args))
+                    r = cur.fetchone()
+                    return dict(r) if r else None
+            except psycopg2.OperationalError as e:
+                if attempt == 0 and ("closed" in str(e).lower() or "recovery" in str(e).lower()
+                                     or "terminated" in str(e).lower()):
+                    self._drop_conn()
+                    conn = self._conn()
+                    continue
+                raise
 
     def exe(self, sql, args=()):
-        with self.conn.cursor() as cur:
-            cur.execute(_pg_sql(sql), list(args))
-        self.conn.commit()
-        return cur
+        conn = self._conn()
+        for attempt in (0, 1):
+            try:
+                with conn.cursor() as cur:
+                    cur.execute(_pg_sql(sql), list(args))
+                conn.commit()
+                return cur
+            except psycopg2.OperationalError as e:
+                if attempt == 0 and ("closed" in str(e).lower() or "recovery" in str(e).lower()
+                                     or "terminated" in str(e).lower()):
+                    self._drop_conn()
+                    conn = self._conn()
+                    continue
+                raise
+
+    def _drop_conn(self):
+        try:
+            self._thread_local.conn.close()
+        except Exception:
+            pass
+        self._thread_local.conn = None
+
+    def close(self):
+        self._drop_conn()
 
 
 # The driver factory — app code keeps calling DB() with no args.

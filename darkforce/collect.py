@@ -132,7 +132,7 @@ def crawl_and_ingest(db, url, use_tor=False, timeout=20):
         except Exception:
             pass
         res["skipped"] = wall
-        log("WALL {} -> {wall} (skipped, marked)", url)
+        log("WALL {} -> {{wall}} (skipped, marked)", url)
         return res
 
     try:
