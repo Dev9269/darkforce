@@ -233,10 +233,34 @@ def test_normalize_category_maps_to_canonical():
     assert normalize_category("ransom") == "ransomware"
     assert normalize_category("directory") == "directories"
     assert normalize_category("clearnet") == "other"
-    assert normalize_category("forum") == "other"
+    assert normalize_category("forum") == "forums"
+    assert normalize_category("phishing") == "fraud/scam"
+    assert normalize_category("terrorism") == "extremism"
+    assert normalize_category("document") == "forgery"
+    assert normalize_category("casino") == "gambling"
+    assert normalize_category("assassination") == "hitman"
+    assert normalize_category("leak") == "leaked data"
     assert normalize_category("") == "other"
     for c in CANONICAL:
         assert normalize_category(c) == c
+
+
+def test_classify_site_uses_extended_taxonomy():
+    from darkforce.categories import classify_site
+    cases = {
+        "passport for sale": "forgery",
+        "Replica watches knockoff": "counterfeit",
+        "phishing kit and spoof": "fraud/scam",
+        "jihadist recruitment": "extremism",
+        "tor casino and poker": "gambling",
+        "dread forum discussion": "forums",
+        "Leaked database for sale": "leaked data",
+        "Hitman hire": "hitman",
+        "clone card shop": "financial",
+        "xanax bars": "drugs",
+    }
+    for title, expected in cases.items():
+        assert classify_site(title=title) == expected, title
 
 
 def test_sites_all_exposes_lang_and_normalized_category(sqlite_db):
