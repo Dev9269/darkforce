@@ -104,6 +104,35 @@ def collect_darkfail():
     return out
 
 
+def collect_tor66(pages=("top_onions", "fresh")):
+    """Tor66 category index (onion-only; must go over Tor).
+
+    tor66's listing pages expose hundreds of .onion addresses with page
+    titles; we harvest the addresses (metadata, not content) and classify
+    them via the taxonomy so they can seed the crawl queue.
+    """
+    out, seen = [], set()
+    for page in pages:
+        url = "http://tor66sewebgixwhcqfnp5inzp5x5uohhdy3kvtnyfxc2e5mxiuh34iid.onion/" + (page or "").lstrip("/")
+        try:
+            from .tor import active_proxy
+            proxies = {"http": active_proxy(), "https": active_proxy()}
+            r = _get(url, proxies=proxies, timeout=30)
+        except Exception:
+            continue
+        if not r or r.status_code != 200:
+            continue
+        for m in ONION_V3.finditer(r.text):
+            u = m.group(0)
+            if u in seen:
+                continue
+            seen.add(u)
+            link = "http://" + u
+            out.append({"title": f"tor66:{page}", "url": link, "category": "directory",
+                        "purpose": classify_site("", link)})
+    return out
+
+
 def collect_ransomware(api_key=""):
     """Leak-site candidates from ransomware.live.
 
@@ -301,6 +330,8 @@ def collect_source(name):
         return collect_ahmia()
     if name == "darkfail":
         return collect_darkfail()
+    if name == "tor66":
+        return collect_tor66()
     if name == "ransomware":
         return collect_ransomware()
     if name == "urlhaus":

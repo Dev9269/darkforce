@@ -160,6 +160,21 @@ def test_export_pdf():
 
 
 # ---------- watchlists / alerts / health ----------
+def test_finding_alerts_fire_and_dedupe(sqlite_db):
+    sid = sqlite_db.upsert_site("http://leak.onion", title="Leak index", category="leaked_data")
+    url = "http://leak.onion/collection"
+    base = sqlite_db.latest_alert_id()
+    sqlite_db.add_finding(sid, "ransomware", "critical", "Ransomware leak site", 0.95, url)
+    sqlite_db.add_finding(sid, "server_banner", "low", "X-Powered-By", 0.3, url)
+    sqlite_db.add_finding(sid, "banner_match", "high", "Matched fingerprint", 0.9, url)
+    new = [a for a in sqlite_db.alerts() if a["id"] > base]
+    kinds = sorted(a["kind"] for a in new)
+    assert kinds == ["finding:banner_match", "finding:ransomware"], kinds
+    sqlite_db.add_finding(sid, "ransomware", "critical", "Ransomware leak site", 0.95, url)
+    new2 = [a for a in sqlite_db.alerts() if a["id"] > base]
+    assert len(new2) == 2, "same finding re-added within 24h must not create a second alert"
+
+
 def test_watchlist_alerts_and_sqlite(sqlite_db):
     sqlite_db.add_watchlist("Creds", "password", "all")
     sqlite_db.add_watchlist("Disabled", "zzz", "all")

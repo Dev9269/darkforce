@@ -310,6 +310,44 @@ class BaseDB:
             "INSERT INTO findings(site_id,kind,severity,detail,confidence,url,first_seen) VALUES(?,?,?,?,?,?,?)",
             (site_id, kind, severity, detail, confidence, url, utcnow()),
         )
+        self._maybe_alert_from_finding(site_id, kind, severity, detail, confidence, url)
+
+    _ALERT_KINDS = frozenset({
+        "hitman", "hitman_for_hire", "leaked_data", "leaked_database", "data_breach",
+        "ransomware", "ransomware_leak", "extremism", "terrorism", "weapons",
+        "weapon_sale", "malware", "carding", "stolen_cards", "fraud_scam",
+    })
+
+    def _maybe_alert_from_finding(self, site_id, kind, severity, detail, confidence, url=""):
+        """Derive a LIVE alert from a finding at the sink so the alerts badge /
+        SSE actually moves. Alerts fire when a finding is high/critical OR hits
+        a danger kind OR is very confident. No alert if this exact finding was
+        already alerted in the last 24h (dedupe across rescans)."""
+        sev = severity or "low"
+        danger = kind in self._ALERT_KINDS
+        if not (sev in ("high", "critical") or danger or confidence >= 0.85):
+            return
+        import datetime as _dt
+        cutoff = (_dt.datetime.now(_dt.timezone.utc) - _dt.timedelta(days=1)).isoformat(timespec="seconds")
+        dup = self.one(
+            "SELECT COUNT(*) n FROM alerts WHERE kind=? AND COALESCE(url,'')=? "
+            "AND created_at > ?",
+            (f"finding:{kind}", url or "", cutoff),
+        )["n"]
+        if dup:
+            return
+        self.exe(
+            "INSERT INTO alerts(kind,title,detail,url,confidence,created_at) "
+            "VALUES(?,?,?,?,?,?)",
+            (
+                f"finding:{kind}",
+                "Finding: " + (kind or "unknown").replace("_", " ").title(),
+                (detail or "")[:400],
+                url,
+                confidence,
+                utcnow(),
+            ),
+        )
 
     def add_link(self, src_type, src_value, tgt_type, tgt_value, edge, confidence, evidence="", site_id=None):
         self.exe(
