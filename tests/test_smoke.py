@@ -253,6 +253,32 @@ def test_digest_summary_and_pdf(sqlite_db):
 
 
 # ---------- category taxonomy ----------
+def test_collectors_validate_urls(monkeypatch):
+    """Directory collectors must return well-formed v3 onion URLs, or degrade
+    gracefully (empty) rather than raising when the source is unreachable."""
+    from darkforce import seeds
+
+    def fake_get(url, params=None, proxies=None, timeout=15, headers=None):
+        v3 = "a" * 56
+        class R:
+            status_code = 200
+            text = (
+                f'<div class="link-url">http://{v3}.onion</div>'
+                f'<p class="url">http://{v3}.onion</p>'
+                f'<a href="http://{v3}.onion">x</a>'
+            )
+        return R()
+
+    monkeypatch.setattr(seeds, "_get", fake_get)
+    for name in ("azidal", "thedarknet", "notevil"):
+        items = seeds.collect_source(name)
+        assert items, f"{name} returned nothing with a live fixture"
+        for it in items:
+            assert it["url"].lstrip("http://").endswith(".onion")
+            assert len(it["url"].lstrip("http://").split(".")[0]) in (16, 56)
+            assert it.get("category") and it.get("title")
+
+
 def test_normalize_category_maps_to_canonical():
     from darkforce.categories import CANONICAL, normalize_category
     assert normalize_category("financial") == "financial/carding"

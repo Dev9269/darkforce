@@ -21,6 +21,7 @@ def run_pass(db, tor, max_sites=30, verbose=True):
     if verbose:
         print("[live] seeding...")
     for s in ("directory", "darkfail", "onionoo", "ahmia", "ransomware",
+              "tor66", "azidal", "thedarknet", "notevil",
               "telegram", "clearnet", "urlhaus"):
         try:
             items = seeds.collect_source(s)

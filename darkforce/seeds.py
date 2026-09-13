@@ -133,6 +133,109 @@ def collect_tor66(pages=("top_onions", "fresh")):
     return out
 
 
+def collect_azidal():
+    """Azidal Deep Index (clearnet) - large, less-curated .onion directory.
+
+    One nav-light static page with 120+ v3 addresses in `.link-url` blocks
+    (addresses embedded as plain text 'http://xxx.onion'). This is one of the
+    fatter 'not-so-popular' indexes, so it materially widens discovery. We
+    extract only the addresses (metadata), never page content.
+    """
+    out, seen = [], set()
+    r = _get("https://azidal.neocities.org/", timeout=20)
+    if not r or r.status_code != 200:
+        return out
+    soup = BeautifulSoup(r.text, "html.parser")
+    for div in soup.select(".link-url, p.url, code, .mono"):
+        for m in ONION_V3.finditer(div.get_text(" ", strip=True)):
+            u = m.group(0)
+            if u in seen:
+                continue
+            seen.add(u)
+            link = "http://" + u
+            out.append({"title": "azidal", "url": link, "category": "directory",
+                        "purpose": classify_site("", link)})
+    for m in ONION_V3.finditer(r.text):
+        u = m.group(0)
+        if u in seen:
+            continue
+        seen.add(u)
+        link = "http://" + u
+        out.append({"title": "azidal", "url": link, "category": "directory",
+                    "purpose": classify_site("", link)})
+    return out
+
+
+def collect_thedarknet():
+    """TheDarknet.Directory (clearnet) - research-curated onion catalog.
+
+    Explicitly aimed at lawful research (no markets/malware); each entry is a
+    56-char v3 exposed in an <a href>. We map the surrounding '<verified/
+    check>' badge into the title so analysts can trust-weight the seed.
+    """
+    out, seen = [], set()
+    r = _get("https://thedarknet.directory/", timeout=20)
+    if not r or r.status_code != 200:
+        return out
+    soup = BeautifulSoup(r.text, "html.parser")
+    for a in soup.find_all("a", href=True):
+        href = a.get("href", "")
+        m = ONION_V3.search(href)
+        if not m:
+            continue
+        u = m.group(0)
+        if u in seen:
+            continue
+        seen.add(u)
+        link = "http://" + u
+        label = "thedarknet"
+        parent = a.find_parent(["article", "li", "tr", "section"]) or a.parent
+        if parent:
+            text = parent.get_text(" ", strip=True)
+            if "verified" in text.lower():
+                label += ":verified"
+            elif "check" in text.lower():
+                label += ":check"
+            elif "research" in text.lower():
+                label += ":research"
+            title = (parent.find("h2") or parent.find("h3"))
+            if title:
+                label += ":" + title.get_text(strip=True)[:40]
+        out.append({"title": label, "url": link, "category": "directory",
+                    "purpose": classify_site("", link)})
+    return out
+
+
+def collect_notevil():
+    """notEvil wiki (clearnet) - search-engine companion directory.
+
+    Lists canonical onion addresses as <p class="url">text</p> next to each
+    tagged site; harvests ~27 hand-maintained v3 addresses.
+    """
+    out, seen = [], set()
+    r = _get("https://notevil.wiki/", timeout=20)
+    if not r or r.status_code != 200:
+        return out
+    soup = BeautifulSoup(r.text, "html.parser")
+    for el in soup.select("p.url, .url, a[href*='.onion']"):
+        if el.name == "a":
+            text = el.get("href", "")
+            label = el.get_text(strip=True) or "notevil"
+        else:
+            text = el.get_text(" ", strip=True)
+            label = (el.find_previous(["a", "h2", "h3", "strong"]) or el)
+            label = label.get_text(strip=True) if hasattr(label, "get_text") else "notevil"
+        for m in ONION_V3.finditer(text):
+            u = m.group(0)
+            if u in seen:
+                continue
+            seen.add(u)
+            link = "http://" + u
+            out.append({"title": f"notevil:{label or 'list'}"[:80], "url": link,
+                        "category": "directory", "purpose": classify_site("", link)})
+    return out
+
+
 def collect_ransomware(api_key=""):
     """Leak-site candidates from ransomware.live.
 
@@ -332,6 +435,12 @@ def collect_source(name):
         return collect_darkfail()
     if name == "tor66":
         return collect_tor66()
+    if name == "azidal":
+        return collect_azidal()
+    if name == "thedarknet":
+        return collect_thedarknet()
+    if name == "notevil":
+        return collect_notevil()
     if name == "ransomware":
         return collect_ransomware()
     if name == "urlhaus":
