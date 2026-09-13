@@ -238,6 +238,20 @@ def test_pdf_report_builds():
     assert data[:4] == b"%PDF" and len(data) > 800
 
 
+def test_digest_summary_and_pdf(sqlite_db):
+    from darkforce.export import digest_pdf
+    sid, aid = _seed(sqlite_db)
+    sqlite_db.add_finding(sid, "leaked_data", "critical", "Found dump", 0.98)
+    act = sqlite_db.recent_activity(hours=24)
+    assert "generated_at" in act and "snapshot" in act
+    assert act["new_sites_total"] == 1
+    assert act["new_sites_by_category"].get("other") == 1
+    assert any(f["severity"] in ("high", "critical") for f in act["high_critical_findings"])
+    meta = {"title": "Digest", "date": act["generated_at"], "backend": "sqlite"}
+    data = digest_pdf(meta, act)
+    assert data[:4] == b"%PDF" and len(data) > 800
+
+
 # ---------- category taxonomy ----------
 def test_normalize_category_maps_to_canonical():
     from darkforce.categories import CANONICAL, normalize_category

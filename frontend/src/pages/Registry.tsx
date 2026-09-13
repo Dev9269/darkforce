@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { Globe2, Search, LayoutGrid, ArrowLeft, AlertTriangle, CircleHelp, LoaderCircle } from "lucide-react";
+import { Globe2, Search, LayoutGrid, ArrowLeft, AlertTriangle, CircleHelp, LoaderCircle, Network } from "lucide-react";
 import { Link } from "react-router-dom";
 import { getCategories, getSiteCatalog, getText, type JsonRecord } from "@/lib/darkforce";
 
@@ -44,6 +44,7 @@ export default function Registry() {
   const nav = (
     <nav className="registry-nav">
       <Link to="/" className="registry-back"><ArrowLeft size={14} /> DARKFORCE CONSOLE</Link>
+      <Link to="/analyst" className="registry-back" data-testid="registry-analyst-link"><Network size={14} /> ANALYST</Link>
       <span className="registry-title"><LayoutGrid size={14} /> MASTER REGISTRY — SITE INVENTORY</span>
       <span className="mono registry-total">{total.toLocaleString()} INDEXED SITES</span>
     </nav>

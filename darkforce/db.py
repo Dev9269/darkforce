@@ -372,6 +372,38 @@ class BaseDB:
             "source": sources[0]["name"] if sources else "",
         }
 
+    def recent_activity(self, hours=24):
+        """Nightly-digest summary of the last `hours`: new sites per category,
+        new high/critical findings, recent alerts and collector state."""
+        cutoff = days_ago(hours)
+        new_sites = [dict(r) for r in self.q(
+            "SELECT s.url, s.category, s.first_seen FROM sites s WHERE s.first_seen >= ? "
+            "ORDER BY s.first_seen DESC", (cutoff,))]
+        new_findings = [dict(r) for r in self.q(
+            "SELECT f.kind, f.severity, f.detail, f.confidence, f.url, s.url AS site "
+            "FROM findings f LEFT JOIN sites s ON s.id = f.site_id "
+            "WHERE f.first_seen >= ? ORDER BY f.first_seen DESC "
+            "LIMIT 200", (cutoff,))]
+        grave = [f for f in new_findings
+                 if f["severity"] in ("high", "critical")]
+        alerts = [dict(r) for r in self.q(
+            "SELECT kind, title, detail, confidence, created_at FROM alerts "
+            "WHERE created_at >= ? ORDER BY created_at DESC", (cutoff,))]
+        by_category = {}
+        for s in new_sites:
+            by_category[s["category"] or "unknown"] = by_category.get(s["category"] or "unknown", 0) + 1
+        return {
+            "window_hours": hours,
+            "generated_at": utcnow(),
+            "new_sites_total": len(new_sites),
+            "new_sites_by_category": by_category,
+            "new_findings_total": len(new_findings),
+            "high_critical_findings": grave[:50],
+            "new_alerts_total": len(alerts),
+            "new_alerts": alerts[:50],
+            "snapshot": self.stats(),
+        }
+
     def search(self, q, kind="all", start=None, end=None, category=None):
         q = (q or "").strip().lower()
         res = {"actors": [], "identifiers": [], "sites": []}

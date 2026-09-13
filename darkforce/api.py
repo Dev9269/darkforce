@@ -1,4 +1,4 @@
-﻿import json
+import json
 import os
 import uuid
 from typing import Optional
@@ -503,6 +503,61 @@ def alerts_stream():
     from fastapi.responses import StreamingResponse
 
     return StreamingResponse(event_stream(), media_type="text/event-stream")
+
+
+@app.get("/api/digest")
+def api_digest(hours: int = 24, fmt: str = "json",
+               who: dict = Depends(auth.require_role("viewer"))):
+    """Nightly / ad-hoc digest of recent activity. fmt = json|pdf|md."""
+    from .export import digest_pdf, to_json
+
+    activity = db.recent_activity(hours=hours)
+    from .config import DATABASE_URL
+    backend_name = "postgres" if DATABASE_URL else "sqlite"
+    title = "DarkForce Nightly Digest"
+    meta = {
+        "title": title,
+        "subtitle": "24-hour collection summary",
+        "date": activity["generated_at"],
+        "backend": backend_name,
+    }
+    if fmt == "pdf":
+        pdf = digest_pdf(meta, activity)
+        return Response(pdf, media_type="application/pdf",
+                        headers={"Content-Disposition": "attachment; filename=darkforce-digest.pdf"})
+    if fmt == "md":
+        lines = [
+            f"# {title}",
+            "",
+            f"_Generated {activity['generated_at']} (UTC) - backend {backend_name}_",
+            "",
+            "## Snapshot",
+            "",
+            "| Statistic | 24h | Total |",
+            "|---|---|---|",
+            f"| Sites indexed | {activity['new_sites_total']} | {activity['snapshot'].get('sites', 0)} |",
+            f"| Findings | {activity['new_findings_total']} | {activity['snapshot'].get('findings', 0)} |",
+            f"| Actors | - | {activity['snapshot'].get('actors', 0)} |",
+            f"| Identifiers | - | {activity['snapshot'].get('identifiers', 0)} |",
+            f"| Alerts raised | {activity['new_alerts_total']} | - |",
+            "",
+            "## New sites by category",
+            "",
+        ]
+        for cat, n in sorted(activity["new_sites_by_category"].items(), key=lambda kv: -kv[1]):
+            lines.append(f"- {cat}: {n}")
+        lines.append("")
+        lines.append("## High / critical findings (24h)")
+        lines.append("")
+        for f in activity["high_critical_findings"][:50]:
+            lines.append(f"- [{f['severity']}] {f.get('kind')} @ {f.get('site') or f.get('url')}")
+        lines.append("")
+        lines.append("## Fresh alerts (24h)")
+        lines.append("")
+        for a in activity["new_alerts"][:50]:
+            lines.append(f"- [{a.get('kind')}] {a.get('title')}")
+        return Response("\n".join(lines) + "\n", media_type="text/markdown")
+    return activity
 
 
 @app.get("/api/health/collectors")

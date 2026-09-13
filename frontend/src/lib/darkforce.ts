@@ -188,6 +188,17 @@ export const getCategories = () => apiGet<CategoriesResponse>("/categories");
 export const getAlerts = () => apiGet<LiveAlert[]>("/alerts");
 export const getIdentifiers = () => apiGet<Identifier[]>("/identifiers");
 export const getActors = () => apiGet<Actor[]>("/actors");
+export const getNetworkAnalysis = () =>
+  apiGet<{
+    n_nodes?: number;
+    n_edges?: number;
+    n_communities?: number;
+    communities?: JsonRecord[];
+    centrality?: JsonRecord[];
+    bridges?: JsonRecord[];
+    actor_centrality?: JsonRecord[];
+    summary?: JsonRecord;
+  }>("/network/analysis");
 export const getSearch = (q: string, kind: string, category?: string) =>
   apiGet<{ actors?: Actor[]; identifiers?: Identifier[]; sites?: JsonRecord[] }>(
     `/search?q=${encodeURIComponent(q)}&kind=${encodeURIComponent(kind)}` +
