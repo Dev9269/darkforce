@@ -11,6 +11,7 @@ import re
 CANONICAL = [
     "drugs",
     "hacking",
+    "hacking tools",
     "markets",
     "financial/carding",
     "crypto",
@@ -39,6 +40,11 @@ _ALIASES = {
     "ransom": "ransomware",
     "directory": "directories",
     "search": "directories",
+    "tool": "hacking tools",
+    "tools": "hacking tools",
+    "software": "hacking tools",
+    "hack tool": "hacking tools",
+    "hacking tool": "hacking tools",
     "porn": "porn",
     "adult": "porn",
     "leak": "leaked data",
@@ -88,6 +94,7 @@ def normalize_category(raw):
 
 # Order matters: first matching group wins.
 RULES = [
+    "hacking tools",
     "hacking",
     "drugs",
     "weapons",
@@ -119,11 +126,29 @@ KEYWORDS = {
         r"\bstero", r"\bpharmaceutical", r"\bvinia\b", r"\bameth\b",
         r"\bbuy .* (powder|pills|pills?|bars)\b",
     ],
+    "hacking tools": [
+        r"\brat\b", r"\brats\b", r"\bcrypter\b", r"\bfud\b", r"\bbackdoor\b",
+        r"\bzeroday\b", r"\bzero-day\b", r"\bwebshell\b",
+        r"\bkeylogger\b", r"\bspyware\b", r"\bstealer\b", r"\binfostealer\b",
+        r"\bremote access", r"\bmalware builder\b",
+        r"\bfire rat\b", r"\bimminent rat\b", r"\bcyber rat\b", r"\bandroid spy\b",
+        r"\bhacking tools?\b", r"\bhacker tools?\b", r"\bhack tools?\b",
+        r"\bsecurity tools?\b", r"\bpen ?test", r"\bpenetration (tool|testing)",
+        r"\bhack pack\b", r"\btool ?kit\b", r"\bexploit ?kit\b",
+        r"\bc2 panel\b", r"\bcnc panel\b",
+        r"\bstresser\b", r"\bbooter\b", r"\bddos tool",
+        r"\bsqlmap\b", r"\bcracking tools?\b", r"\bransomware builder\b",
+        r"\bphishing ?kit\b", r"\bphishing ?panel\b", r"\bemail spammer\b",
+        r"\bsms bomber\b", r"\bmass mailer\b", r"\bcarding tutorial",
+        r"\b(?:hack|hacking|pentest)[- ](?:tools?|software|kit)",
+    ],
     "hacking": [
         r"\bhacker", r"\bhacking", r"\bexploit", r"\bzeroday\b",
         r"\bRAT\b", r"\bFUD\b", r"\bcrypter\b", r"\bbackdoor\b",
         r"\bsurveillance", r"\bmonitor\b", r"\bhack service",
         r"\bprofessional hacker", r"\belite hacking", r"\bblack hat",
+        r"\bhack (facebook|instagram|whatsapp|gmail|snapchat|email|phone|wifi|social)",
+        r"\bhire[a-z ]*hack",
     ],
     "weapons": [
         r"\bgun\b", r"\bweapon", r"\bfirearm", r"\bammo", r"\bammunition",
@@ -153,6 +178,8 @@ KEYWORDS = {
         r"\bcounterfeit", r"\bprinter", r"\bfake (currency|money|dollars?|euros?|bills?)",
         r"\breplica", r"\bknockoff", r"\bfake (goods|products?|bags?|shoes?|watches?)",
         r"\bsuperfake", r"\breps?\b", r"\bfake rolex", r"\bfake gucci",
+        r"\bbanknote[ns]?\b", r"\bbanknoten\b", r"\bgef.lschte\b", r"\bfalschgeld\b",
+        r"\bb?lte ?geld\b",
     ],
     "fraud/scam": [
         r"\bphishing", r"\bsextortion", r"\bscam", r"\bscams", r"\bfraud",

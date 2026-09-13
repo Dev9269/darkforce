@@ -36,7 +36,8 @@ def _get(url, params=None, proxies=None, timeout=15, headers=None):
         return None
 
 
-def collect_ahmia(queries=("market vendor", "dump", "database", "combo list")):
+def collect_ahmia(queries=("market vendor", "dump", "database", "combo list",
+                           "hacking tools", "rat", "crypter", "exploit kit")):
     """Ahmia.fi onion discovery.
 
     Ahmia's clearnet search fixture now requires a Tor-boundary session, so

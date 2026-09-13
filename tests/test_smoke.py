@@ -305,7 +305,7 @@ def test_classify_site_uses_extended_taxonomy():
     cases = {
         "passport for sale": "forgery",
         "Replica watches knockoff": "counterfeit",
-        "phishing kit and spoof": "fraud/scam",
+        "phishing kit and spoof": "hacking tools",
         "jihadist recruitment": "extremism",
         "tor casino and poker": "gambling",
         "dread forum discussion": "forums",
