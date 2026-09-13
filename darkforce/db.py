@@ -14,6 +14,7 @@ import threading
 from datetime import datetime, timedelta, timezone
 
 from .config import DB_PATH, DATABASE_URL
+from . import categories
 
 
 def utcnow():
@@ -222,12 +223,18 @@ class BaseDB:
         )
 
     def upsert_site(self, url, **kw):
+        if kw.get("category"):
+            kw["category"] = categories.normalize_category(kw["category"])
         kw.setdefault("first_seen", utcnow())
         kw.setdefault("last_scan", utcnow())
         cols = list(kw.keys())
+        updates = ", ".join(
+            f"{name}=excluded.{name}" if name not in ("first_seen",) else f"first_seen=excluded.first_seen"
+            for name in cols
+        )
         self.exe(
             f"INSERT INTO sites(url,{','.join(cols)}) VALUES(?," + ",".join("?" * len(cols)) + ") "
-            "ON CONFLICT(url) DO UPDATE SET last_scan=excluded.last_scan",
+            f"ON CONFLICT(url) DO UPDATE SET {updates}",
             (url,) + tuple(kw[c] for c in cols),
         )
         return self.one("SELECT id FROM sites WHERE url=?", (url,))["id"]
@@ -327,17 +334,25 @@ class BaseDB:
             "source": sources[0]["name"] if sources else "",
         }
 
-    def search(self, q, kind="all", start=None, end=None):
+    def search(self, q, kind="all", start=None, end=None, category=None):
         q = (q or "").strip().lower()
         res = {"actors": [], "identifiers": [], "sites": []}
+        cat = None
+        if category:
+            cat = categories.normalize_category(category)
         if not q:
             if kind in ("all", "actor"):
                 res["actors"] = self.all_actors()
             if kind in ("all", "id", "identifier"):
                 res["identifiers"] = self.all_identifiers()
             if kind in ("all", "site"):
-                res["sites"] = [dict(r) for r in self.q(
-                    "SELECT * FROM sites ORDER BY last_scan DESC, id DESC")]
+                if cat:
+                    res["sites"] = [dict(r) for r in self.q(
+                        "SELECT * FROM sites WHERE category=? "
+                        "ORDER BY last_scan DESC, id DESC", (cat,))]
+                else:
+                    res["sites"] = [dict(r) for r in self.q(
+                        "SELECT * FROM sites ORDER BY last_scan DESC, id DESC")]
             return res
         if kind in ("all", "actor"):
             res["actors"] = [dict(r) for r in self.q(
@@ -347,8 +362,14 @@ class BaseDB:
                 "SELECT * FROM identifiers WHERE lower(kind||' '||value||' '||COALESCE(detail,'')) LIKE ?",
                 (f"%{q}%",))]
         if kind in ("all", "site"):
-            res["sites"] = [dict(r) for r in self.q(
-                "SELECT * FROM sites WHERE lower(url||' '||COALESCE(title,'')) LIKE ?", (f"%{q}%",))]
+            if cat:
+                res["sites"] = [dict(r) for r in self.q(
+                    "SELECT * FROM sites WHERE category=? AND "
+                    "lower(url||' '||COALESCE(title,'')) LIKE ?",
+                    (cat, f"%{q}%"))]
+            else:
+                res["sites"] = [dict(r) for r in self.q(
+                    "SELECT * FROM sites WHERE lower(url||' '||COALESCE(title,'')) LIKE ?", (f"%{q}%",))]
         return res
 
     def identifiers_for_actor(self, actor_id):

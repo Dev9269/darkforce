@@ -25,3 +25,5 @@ data/pg.log
 data/tor-managed.log
 darkforce.session
 .tg_auth.json
+data/harvest_*.log
+data/harvest_logs/

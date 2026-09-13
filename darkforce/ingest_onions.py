@@ -54,7 +54,7 @@ def main():
             continue
         title = (rec.get("title") or "").strip()[:200]
         lang = (rec.get("lang") or "").strip().upper()[:8]
-        purpose = classify_site(title, url)
+        purpose = rec.get("purpose") or classify_site(title, url)
         purpose = normalize_category(purpose)
         try:
             db.upsert_site(url, title=title or None, category=purpose, lang=lang or None)

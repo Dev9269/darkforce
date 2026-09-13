@@ -182,9 +182,10 @@ export const getCategories = () => apiGet<CategoriesResponse>("/categories");
 export const getAlerts = () => apiGet<LiveAlert[]>("/alerts");
 export const getIdentifiers = () => apiGet<Identifier[]>("/identifiers");
 export const getActors = () => apiGet<Actor[]>("/actors");
-export const getSearch = (q: string, kind: string) =>
+export const getSearch = (q: string, kind: string, category?: string) =>
   apiGet<{ actors?: Actor[]; identifiers?: Identifier[]; sites?: JsonRecord[] }>(
-    `/search?q=${encodeURIComponent(q)}&kind=${encodeURIComponent(kind)}`,
+    `/search?q=${encodeURIComponent(q)}&kind=${encodeURIComponent(kind)}` +
+      (category ? `&category=${encodeURIComponent(category)}` : ""),
   );
 export const getActor = (actorId: string | number) => apiGet<Actor>(`/actor/${encodeURIComponent(String(actorId))}`);
 export const getGraph = (actorId: string) =>

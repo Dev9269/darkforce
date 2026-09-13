@@ -121,8 +121,8 @@ def stats():
 
 
 @app.get("/api/search")
-def search(q: str = "", kind: str = "all"):
-    return db.search(q, kind)
+def search(q: str = "", kind: str = "all", category: str = ""):
+    return db.search(q, kind, category=category or None)
 
 
 @app.get("/api/identifiers")
