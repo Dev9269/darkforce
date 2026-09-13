@@ -178,6 +178,12 @@ export interface LiveAlert {
 
 export const getStats = () => apiGet<Stats>("/stats");
 export const getSites = () => apiGet<JsonRecord[]>("/sites");
+export const getSiteCatalog = (options?: { category?: string; q?: string; page?: number; perPage?: number }) =>
+  apiGet<{ items: JsonRecord[]; total: number; page: number; per_page: number }>(
+    `/sites?page=${options?.page ?? 1}&per_page=${options?.perPage ?? 100}` +
+      (options?.category ? `&category=${encodeURIComponent(options.category)}` : "") +
+      (options?.q ? `&q=${encodeURIComponent(options.q)}` : ""),
+  );
 export const getCategories = () => apiGet<CategoriesResponse>("/categories");
 export const getAlerts = () => apiGet<LiveAlert[]>("/alerts");
 export const getIdentifiers = () => apiGet<Identifier[]>("/identifiers");
