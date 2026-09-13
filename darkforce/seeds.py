@@ -36,35 +36,73 @@ def _get(url, params=None, proxies=None, timeout=15, headers=None):
         return None
 
 
+def _ahmia_token(proxies=None):
+    """Fetch ahmia's search form to recover its anti-bot token (name/value)."""
+    try:
+        r = requests.get("https://ahmia.fi/search/?q=x", proxies=proxies,
+                         headers={"User-Agent": "Mozilla/5.0"}, timeout=45)
+        if not r or r.status_code != 200:
+            return None
+        m = re.search(r'<input type="hidden" name="([a-f0-9]+)" value="([a-f0-9]+)">', r.text)
+        return {m.group(1): m.group(2)} if m else None
+    except Exception:
+        return None
+
+
 def collect_ahmia(queries=("market vendor", "dump", "database", "combo list",
-                           "hacking tools", "rat", "crypter", "exploit kit")):
+                           "hacking tools", "rat", "crypter", "exploit kit",
+                           "spyware", "stealer", "phishing kit", "stresser",
+                           "ddos", "keylogger", "zeroday")):
     """Ahmia.fi onion discovery.
 
-    Ahmia's clearnet search fixture now requires a Tor-boundary session, so
-    clearnet attempts degrade gracefully (return []). When the caller passes a
-    Tor proxy (requests `proxies=`) we can still harvest list items.
+    Ahmia search requires a Tor-boundary session plus a per-request anti-bot
+    token rendered into the search form. We fetch the form once, replay the
+    token alongside each query, and harvest the `li.result` blocks (title +
+    onion cite, never page content).
     """
     out = []
+    seen = set()
+    try:
+        from .tor import active_proxy
+        proxy = active_proxy()
+        proxies = {"http": proxy, "https": proxy} if proxy else None
+    except Exception:
+        proxies = None
+    if not proxies:
+        return out
+    token = _ahmia_token(proxies)
+    if token is None:
+        return out
     for q in queries:
         params = {"q": q}
+        params.update(token)
         try:
-            seed = _get("https://ahmia.fi/search/", params=params)
+            seed = _get("https://ahmia.fi/search/", params=params, proxies=proxies, timeout=45)
         except Exception:
             seed = None
         if not seed or seed.status_code != 200:
             continue
         try:
             soup = BeautifulSoup(seed.text, "html.parser")
-            for a in soup.select("li.result a[href], ul#results li a, li a[href*='.onion']"):
+            for li in soup.select("li.result"):
+                cite = "".join(li.get_text(" ", strip=True) for _ in [0])
+                a = li.find("a", href=True)
+                if not a:
+                    continue
                 url = a.get("href", "")
-                if ".onion" in url:
-                    link = ("https://ahmia.fi" + url) if url.startswith("/") else url
-                    title = a.get_text(" ", strip=True)[:200] or "ahmia listed"
-                    out.append({"title": title, "url": link, "category": "directory",
-                                "purpose": classify_site(title, link)})
+                m = re.search(r"[a-z2-7]{56}\.onion", li.get_text(" ", strip=True))
+                if not m:
+                    continue
+                link = "http://" + m.group(0)
+                if link in seen:
+                    continue
+                seen.add(link)
+                title = a.get_text(" ", strip=True)[:200] or "ahmia listed"
+                out.append({"title": title, "url": link, "category": "directory",
+                            "purpose": classify_site(title, link)})
         except Exception:
             pass
-        time.sleep(0.5)
+        time.sleep(0.6)
     if out:
         return out
     # Clearnet/Ahmia search is now session-bound; fall back to the public index pages.

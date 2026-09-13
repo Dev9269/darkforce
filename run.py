@@ -9,6 +9,7 @@ sys.path.insert(0, BASE)
 def run_pass(db, tor, max_sites=30, verbose=True):
     """One full collection pass: seed -> crawl -> stylometry merge.
     Returns a summary dict. Safe to call repeatedly (dedup skips unchanged pages)."""
+    from darkforce import categories as _cats
     from darkforce import link, seeds, stylo
     from darkforce.collect import crawl_and_ingest
     from urllib.parse import urlparse
@@ -35,7 +36,12 @@ def run_pass(db, tor, max_sites=30, verbose=True):
             url = it["url"]
             if not url or db.site_id(url):
                 continue
-            db.upsert_site(url, title=it.get("title", "")[:200], category=it.get("category", "seed"))
+            purpose = it.get("purpose") or ""
+            # A collector-level category is provenance ("came from a directory"),
+            # not the analyst purpose. Prefer the classified purpose when it
+            # resolves to something meaningful; fall back to provenance.
+            cat = purpose if _cats.normalize_category(purpose) != "other" else it.get("category", "seed")
+            db.upsert_site(url, title=it.get("title", "")[:200], category=cat)
             new_urls.append(url)
             n += 1
             totals["sites"] += 1

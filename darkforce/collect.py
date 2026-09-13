@@ -112,12 +112,18 @@ def crawl_and_ingest(db, url, use_tor=False, timeout=20):
             res["skipped"] = "dedup"
             log("DEDUP {} unchanged bytes hash, last_scan bumped", url)
             return res
+        prev_row = db.one("SELECT category FROM sites WHERE url=?", (url,)) or {}
+        prev_cat = (prev_row.get("category") or "").strip()
+        if prev_cat and prev_cat not in ("onion", "clearnet", "other", ""):
+            kw_cat = prev_cat
+        else:
+            kw_cat = "onion" if ".onion" in (urlparse(url).hostname or "") else "clearnet"
         site_id = db.upsert_site(
             url,
             server=fp["server"] or "",
             favicon_hash=fp["favicon_hash"],
             content_hash=fp["content_hash"],
-            category="onion" if ".onion" in (urlparse(url).hostname or "") else "clearnet",
+            category=kw_cat,
             status=str(getattr(snap, "status", "?")),
         )
     except Exception as e:
