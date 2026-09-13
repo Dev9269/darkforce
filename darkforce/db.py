@@ -415,6 +415,33 @@ class BaseDB:
             "SELECT s.*, COUNT(f.id) nfindings FROM sites s LEFT JOIN findings f ON f.site_id=s.id "
             "GROUP BY s.id ORDER BY s.first_seen DESC")]
 
+    def sites_catalog(self, category=None, q="", page=1, per_page=100):
+        """Paginated, filterable master registry for the sites catalog page.
+
+        Returns (page_rows, total). Handles both SQLite (?) and Postgres
+        (auto-converted) via the existing q() placeholder style.
+        """
+        page = max(1, int(page))
+        per_page = min(max(1, int(per_page or 100)), 500)
+        where, args = [], []
+        if category:
+            where.append("s.category=?")
+            args.append(category)
+        if q and q.strip():
+            like = f"%{q.strip().lower()}%"
+            where.append("(lower(s.url) LIKE ? OR lower(COALESCE(s.title,'')) LIKE ?)")
+            args += [like, like]
+        wsql = (" WHERE " + " AND ".join(where)) if where else ""
+        base = ("SELECT s.id, s.url, s.title, s.server, s.status, s.category, "
+                "s.lang, s.source_id, s.first_seen, s.last_scan, "
+                "COUNT(f.id) nfindings "
+                "FROM sites s LEFT JOIN findings f ON f.site_id=s.id" + wsql + " GROUP BY s.id")
+        total = self.one("SELECT COUNT(*) n FROM (" + base + ") t", tuple(args))["n"]
+        rows = [dict(r) for r in self.q(
+            base + " ORDER BY s.last_scan DESC, s.id DESC LIMIT ? OFFSET ?",
+            tuple(args) + (per_page, (page - 1) * per_page))]
+        return rows, total
+
     def timeline(self, start=None, end=None):
         evs = [dict(r) for r in self.q(
             "SELECT ts, handle, title, url, 'post' etype FROM posts WHERE ts>='1900'")]

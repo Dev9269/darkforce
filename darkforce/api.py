@@ -242,8 +242,20 @@ def _site_purpose(row):
 
 
 @app.get("/api/sites")
-def sites_all():
+def sites_all(category: str = "", q: str = "", page: int = 0, per_page: int = 100):
     from darkforce.categories import normalize_category
+    if category or (q or "").strip() or page or per_page != 100:
+        cat = normalize_category(category) if category else None
+        rows, total = db.sites_catalog(cat, q, page or 1, per_page)
+        out = []
+        for r in rows:
+            r["category"] = normalize_category(r.get("category") or "other")
+            r["purpose"] = _site_purpose(r)
+            r.pop("digest", None)
+            r.pop("content_hash", None)
+            r.pop("raw", None)
+            out.append(r)
+        return {"items": out, "total": total, "page": page or 1, "per_page": per_page}
     out = []
     for r in db.sites_all():
         r["category"] = normalize_category(r.get("category") or "other")
@@ -498,7 +510,24 @@ def collector_health():
     return db.collector_health()
 
 
-app.mount("/", StaticFiles(directory=WEB_DIR, html=True), name="web")
+class SpaStaticFiles(StaticFiles):
+    """StaticFiles with HTML5-history fallback: unknown non-API, non-asset
+    paths get index.html so BrowserRouter deep links (/registry) resolve."""
+
+    async def get_response(self, path: str, scope):
+        from starlette.exceptions import HTTPException as StarletteHTTPException
+        try:
+            return await super().get_response(path, scope)
+        except StarletteHTTPException as e:
+            if e.status_code != 404 or path.startswith("api/"):
+                raise
+            index = os.path.join(WEB_DIR, "index.html")
+            if os.path.exists(index):
+                return FileResponse(index)
+            raise
+
+
+app.mount("/", SpaStaticFiles(directory=WEB_DIR, html=True), name="web")
 
 
 def main():
