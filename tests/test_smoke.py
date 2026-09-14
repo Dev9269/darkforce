@@ -197,6 +197,141 @@ def test_health_tracking(sqlite_db):
     assert "ahmia" in sqlite_db.healthy_sources() and "darkfail" not in sqlite_db.healthy_sources()
 
 
+# ---------- evidence provenance ledger ----------
+def test_provenance_chain_identifier(sqlite_db):
+    sid = sqlite_db.upsert_site("http://ev.onion", title="Evidence", category="onion")
+    ch = sqlite_db.add_observation("extract:btc", "btc", "bc1q" + "0" * 38,
+                                   url="http://ev.onion", site_id=sid)
+    assert ch and len(ch) == 64
+    obs = sqlite_db.observation_by_hash(ch)
+    assert obs["raw"] == "bc1q" + "0" * 38
+    sid2 = sqlite_db.upsert_site("http://ev2.onion", title="Evidence2", category="onion")
+    sqlite_db.add_identifier(None, "bob", "btc", "bc1q" + "0" * 38, "wallet",
+                      site_id=sid2, url="http://ev2.onion", content_hash=ch, method="extract:btc")
+    irow = [r for r in sqlite_db.search("bc1q")["identifiers"]][0]
+    chain = sqlite_db.evidence_chain("identifier", irow["id"])
+    assert chain["object"]["content_hash"] == ch
+    assert chain["observations"] and chain["observations"][0]["method"] == "extract:btc"
+    assert chain["observations"][0]["raw"] == "bc1q" + "0" * 38
+
+
+def test_provenance_chain_finding(sqlite_db):
+    sid = sqlite_db.upsert_site("http://p.onion", title="P", category="onion")
+    sqlite_db.add_finding(sid, "server_banner", "medium", "Apache header", 0.6,
+                          url="http://p.onion", method="detect:scan")
+    fid = [r for r in sqlite_db.q("SELECT * FROM findings WHERE site_id=?", (sid,))][0]["id"]
+    chain = sqlite_db.evidence_chain("finding", fid)
+    assert chain["observations"] and chain["observations"][0]["kind"] == "server_banner"
+    assert chain["observations"][0]["raw"] == "Apache header"
+
+
+def test_provenance_link_and_attribute(sqlite_db):
+    sqlite_db.add_link("handle", "alice", "btc", "bc1q" + "0" * 38, "controls", 0.9, "shared post")
+    lid = [r for r in sqlite_db.q(
+        "SELECT * FROM links WHERE src_value='alice' AND edge='controls'")][0]["id"]
+    ev = sqlite_db.q("SELECT * FROM link_evidence WHERE link_id=?", (lid,))
+    assert ev and ev[0]["evidence"] == "shared post"
+    chain = sqlite_db.evidence_chain("link", lid)
+    assert len(chain["observations"]) >= 1
+    sqlite_db.add_attribution("link", "alice", chain["observations"][0]["content_hash"],
+                              statement="disputes", confidence=0.2, note="another plausible owner")
+    stmts = sqlite_db.list_attribution(subject="alice")
+    assert stmts and stmts[0]["statement"] == "disputes"
+    chain2 = sqlite_db.evidence_chain("link", lid)
+    assert chain2["attribution"]
+
+
+def test_source_trust_roundtrip(sqlite_db):
+    sqlite_db.set_source_trust("test", 0.9, notes="verified mirror", analyst="alice")
+    rows = sqlite_db.source_trusts()
+    assert rows and rows[0]["source"] == "test" and abs(rows[0]["trust"] - 0.9) < 1e-6
+    sqlite_db.set_source_trust("test", 0.3, notes="downgraded", analyst="bob")
+    rows = sqlite_db.source_trusts()
+    assert abs(rows[0]["trust"] - 0.3) < 1e-6 and rows[0]["rated_by"] == "bob"
+
+
+def test_observation_dedupes_on_hash(sqlite_db):
+    before = sqlite_db.one("SELECT COUNT(*) c FROM observations")["c"]
+    sqlite_db.add_observation("m", "k", "same raw")
+    sqlite_db.add_observation("m", "k", "same raw")
+    after = sqlite_db.one("SELECT COUNT(*) c FROM observations")["c"]
+    assert after == before + 1
+
+
+# ---------- wallets / stealer pivots ----------
+def test_wallet_cluster_links_handles(sqlite_db):
+    sid = sqlite_db.upsert_site("http://mkt.onion", title="Market", category="onion")
+    aid1 = sqlite_db.upsert_actor("carol", category="onion")
+    aid2 = sqlite_db.upsert_actor("dave", category="onion")
+    w = "bc1q" + "0" * 38
+    sqlite_db.add_identifier(aid1, "carol", "btc", w, "wallet", site_id=sid, method="extract:btc")
+    sqlite_db.add_identifier(aid2, "dave", "btc", w, "wallet", site_id=sid, method="extract:btc")
+    sqlite_db.upsert_wallet(w, "btc")
+    rows, total = sqlite_db.list_wallets(q=w)
+    assert total == 1 and rows[0]["n_identifiers"] == 2
+    cl = sqlite_db.wallet_cluster(w)
+    assert w in cl["wallets"] and "carol" in cl["handles"] and "dave" in cl["handles"]
+
+
+def test_stealer_import_pivots(sqlite_db):
+    from darkforce import collect
+    text = (
+        "# sample stealer log\n"
+        "alice@protonmail.com:somesecret1x:bc1q" + "0" * 38 + ":1.2.3.4:win10\n"
+        "bob@pm.me:otherpass1y:bc1q" + "q" * 38 + ":5.6.7.8:win11\n"
+    )
+    out = collect.import_stealer_log(sqlite_db, text.splitlines(), "stealer_test")
+    assert out["emails"] == 2 and out["btc"] == 2 and out["lines"] == 2
+    piv = sqlite_db.breach_pivots("alice@protonmail.com")
+    assert piv["query"] == "alice@protonmail.com"
+    assert any(b["name"] == "stealer_test" for b in piv["matches"])
+    edges = [r for r in sqlite_db.q("SELECT * FROM links WHERE edge='leaked_in'")]
+    assert len(edges) >= 2
+    # idempotence: re-running adds no duplicate breach record
+    collect.import_stealer_log(sqlite_db, text.splitlines(), "stealer_test")
+    assert sqlite_db.one("SELECT COUNT(*) c FROM breaches WHERE name='stealer_test'")["c"] == 1
+
+
+# ---------- case folders + ops detection ----------
+def test_case_folder_lifecycle(sqlite_db):
+    cid = sqlite_db.create_case("OP Ghost", status="open", owner="alice", notes="follow the wallets")
+    assert cid and sqlite_db.create_case("OP Ghost") is None  # name unique
+    sid = sqlite_db.upsert_site("http://ghost.onion", title="Ghost", category="onion")
+    sqlite_db.case_add_member(cid, "site", sid, label="Market pivot", note="vendor index", tag="poi")
+    c = sqlite_db.get_case(cid)
+    assert c["n_members"] >= 1 and c["members"][0]["label"] == "Market pivot"
+    sqlite_db.update_case_status(cid, "closed")
+    rows = sqlite_db.list_cases(status="closed")
+    assert rows and rows[0]["id"] == cid and rows[0]["status"] == "closed"
+    sqlite_db.case_remove_member(cid, c["members"][0]["id"])
+    assert sqlite_db.get_case(cid)["n_members"] == 0
+
+
+def test_gone_dark_detection(sqlite_db):
+    url = "http://gone.onion"
+    sqlite_db.upsert_site(url, title="Hidden", category="onion", content_hash="abc123")
+    sqlite_db.mark_site_scanned(url, status="down")
+    base = sqlite_db.latest_alert_id()
+    out = sqlite_db.detect_ops(days=14)
+    assert any(g["url"] == url for g in out["gone_dark"])
+    fresh = [a for a in sqlite_db.alerts() if a["id"] > base]
+    assert any(a["kind"] == "sites_gone_dark" for a in fresh)
+
+
+def test_successor_detection(sqlite_db):
+    sqlite_db.add_watchlist("Silk Road 2 successor", "silk road", "market")
+    sqlite_db.upsert_site("http://successor.onion", title="Silk Road 3 - we are back",
+                          category="markets")
+    urls = sqlite_db.sites_all()
+    site = [r for r in urls if r["url"] == "http://successor.onion"][0]
+    assert "silk road" in (site["title"] or "").lower()
+    base = sqlite_db.latest_alert_id()
+    out = sqlite_db.detect_ops(days=14)
+    assert out["successor_alerts"] >= 1
+    fresh = [a for a in sqlite_db.alerts() if a["id"] > base]
+    assert any(a["kind"] == "successor_suspected" for a in fresh)
+
+
 class _O:
     def __init__(self):
         import json

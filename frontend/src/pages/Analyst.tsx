@@ -82,11 +82,25 @@ export default function Analyst() {
           </div>
           <div className="panel-subtitle">Actor network graph, communities, bridges and centrality across the collected onion landscape</div>
         </div>
-        <Link to="/registry" data-testid="analyst-back-link">
-          <Button variant="outline" size="sm">
-            <GitFork size={14} /> Back to Registry
-          </Button>
-        </Link>
+        <div style={{ display: "flex", gap: "0.5rem", alignItems: "center", flexWrap: "wrap" }}>
+          <Link to="/evidence" data-testid="analyst-evidence-link">
+            <Button variant="ghost" size="sm"><FileText size={13} /> Evidence</Button>
+          </Link>
+          <Link to="/wallets" data-testid="analyst-wallets-link">
+            <Button variant="ghost" size="sm"><BarChart3 size={13} /> Wallets</Button>
+          </Link>
+          <Link to="/breaches" data-testid="analyst-breaches-link">
+            <Button variant="ghost" size="sm"><ShieldAlert size={13} /> Breaches</Button>
+          </Link>
+          <Link to="/cases" data-testid="analyst-cases-link">
+            <Button variant="ghost" size="sm"><AlertTriangle size={13} /> Cases / Ops</Button>
+          </Link>
+          <Link to="/registry" data-testid="analyst-back-link">
+            <Button variant="outline" size="sm">
+              <GitFork size={14} /> Back to Registry
+            </Button>
+          </Link>
+        </div>
       </header>
 
       <section className="stat-grid" style={{ marginBottom: "1rem" }}>

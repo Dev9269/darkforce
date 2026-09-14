@@ -46,6 +46,69 @@ def _host_handle(url):
     return parts[0] if parts else host
 
 
+def _site_source(db, site_id):
+    """The sources.id recorded on a site row (NULL-safe, silent)."""
+    try:
+        r = db.one("SELECT source_id FROM sites WHERE id=?", (site_id,))
+        return r["source_id"] if r else None
+    except Exception:
+        return None
+
+
+def import_stealer_log(db, lines, source_name="stealer_log:manual"):
+    """Parse a stealer-log / combo-list dump and ingest its METADATA.
+
+    Safety contract: passwords are never stored. We keep the email (as a
+    correlation primary-entity) and any btc/xmr wallets, both byte-capped and
+    ledgered. Breach -> corpus pivot links let the Analyst graph cross to 'who
+    else reused the same wallet'. Idempotent across re-imports."""
+    from . import extract
+
+    parsed = {"emails": set(), "btc": set(), "xmr": set(), "lines": 0}
+    for ln in lines or []:
+        ln = (ln or "").strip()
+        if not ln or ln.startswith("#"):
+            continue
+        parsed["lines"] += 1
+        for e in extract.EMAIL.findall(ln):
+            parsed["emails"].add(e.lower())
+        for w in extract.BTC.findall(ln):
+            parsed["btc"].add(w)
+        for w in extract.XMR.findall(ln):
+            parsed["xmr"].add(w)
+
+    first_email = sorted(parsed["emails"])[0] if parsed["emails"] else ""
+    db.upsert_breach(source_name, "stealer_log", primary_entity=first_email)
+
+    n_ids = 0
+    for e in parsed["emails"]:
+        ch = db.add_observation("stealer:email", "email", e, collector_version=source_name)
+        db.add_identifier(None, "", "email", e, detail=f"breach:{source_name}",
+                          content_hash=ch, method="stealer:email")
+        db.record_breach_pivot(e, source_name, edge="leaked_in")
+        n_ids += 1
+    for w in parsed["btc"]:
+        ch = db.add_observation("stealer:btc", "btc", w, collector_version=source_name)
+        db.add_identifier(None, "", "btc", w, detail=f"breach:{source_name}",
+                          content_hash=ch, method="stealer:btc")
+        db.upsert_wallet(w, "btc", category="stealer_log")
+        db.record_breach_pivot(w, source_name, edge="leaked_in")
+        n_ids += 1
+    for w in parsed["xmr"]:
+        ch = db.add_observation("stealer:xmr", "xmr", w, collector_version=source_name)
+        db.add_identifier(None, "", "xmr", w, detail=f"breach:{source_name}",
+                          content_hash=ch, method="stealer:xmr")
+        db.upsert_wallet(w, "xmr", category="stealer_log")
+        db.record_breach_pivot(w, source_name, edge="leaked_in")
+        n_ids += 1
+
+    db.log_source_health(source_name, ok=True)
+    return {"breach": source_name,
+            "emails": len(parsed["emails"]), "btc": len(parsed["btc"]),
+            "xmr": len(parsed["xmr"]), "lines": parsed["lines"],
+            "identifiers": n_ids}
+
+
 def _page_title(soup, url):
     og = soup.find("meta", attrs={"property": "og:title"}) or soup.find("meta", attrs={"name": "twitter:title"})
     if og and (og.get("content") or "").strip():
@@ -101,6 +164,12 @@ def crawl_and_ingest(db, url, use_tor=False, timeout=20):
         snap = net.fetch_snap(url, use_tor=use_tor, timeout=timeout)
     except Exception as e:
         res["error"] = f"fetch: {e}"
+        # previously-indexed site no longer resolves -> signal go-dark / pivot
+        if db.site_content_hash(url):
+            try:
+                db.mark_site_scanned(url, status="down")
+            except Exception:
+                pass
         log("SKIP {} -> {}", url, res["error"])
         return res
 
@@ -143,7 +212,8 @@ def crawl_and_ingest(db, url, use_tor=False, timeout=20):
 
     try:
         findings, fps = detect.scan(snap)
-        detect.pipeline_findings(site_id, db, findings, fps)
+        detect.pipeline_findings(site_id, db, findings, fps,
+                                 url=url, source_id=_site_source(db, site_id), method="detect:scan")
         res["findings"] = len(findings)
     except Exception as e:
         log("WARN {} scan/findings: {}", url, e)
@@ -163,7 +233,9 @@ def crawl_and_ingest(db, url, use_tor=False, timeout=20):
         try:
             deep = detect.onionscan(url)
             if deep:
-                detect.pipeline_findings(site_id, db, deep, {})
+                detect.pipeline_findings(site_id, db, deep, {},
+                                         url=url, source_id=_site_source(db, site_id),
+                                         method="onionscan")
                 res["findings"] += len(deep)
                 log("ONIONSCAN {} -> {} finding(s)", url, len(deep))
         except Exception as e:
@@ -188,6 +260,8 @@ def crawl_and_ingest(db, url, use_tor=False, timeout=20):
                 detail=ident["detail"],
                 site_id=site_id,
                 url=url,
+                source_id=_site_source(db, site_id),
+                method=f"extract:{ident['kind']}",
             )
             res["identifiers"] += 1
     except Exception as e:

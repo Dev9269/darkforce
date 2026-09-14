@@ -1,4 +1,4 @@
-import { apiGet, apiPost } from "@/lib/api";
+import { apiDelete, apiGet, apiPatch, apiPost, apiPut } from "@/lib/api";
 
 export type JsonRecord = Record<string, unknown>;
 
@@ -176,6 +176,165 @@ export interface LiveAlert {
   [key: string]: unknown;
 }
 
+export interface TrustRow {
+  source?: string;
+  source_name?: string;
+  trust?: number;
+  rated_by?: string;
+  rated_at?: string;
+  notes?: string;
+  source_type?: string;
+  [key: string]: unknown;
+}
+
+export interface EvidenceObservation {
+  id?: number;
+  content_hash?: string;
+  method?: string;
+  kind?: string;
+  raw?: string;
+  trust?: number;
+  evidence?: string;
+  source_name?: string;
+  observed_at?: string;
+  [key: string]: unknown;
+}
+
+export interface EvidenceChain {
+  type?: string;
+  id?: number;
+  object?: JsonRecord | null;
+  observations?: EvidenceObservation[];
+  attribution?: Attribution[];
+  trust?: number | null;
+  [key: string]: unknown;
+}
+
+export interface Attribution {
+  id?: number;
+  subject_type?: string;
+  subject?: string;
+  claim?: string;
+  statement?: string;
+  confidence?: number;
+  note?: string;
+  analyst?: string;
+  ts?: string;
+  [key: string]: unknown;
+}
+
+export interface Wallet {
+  id?: number;
+  address?: string;
+  kind?: string;
+  category?: string;
+  first_seen?: string;
+  last_seen?: string;
+  n_identifiers?: number;
+  [key: string]: unknown;
+}
+
+export interface WalletCluster {
+  seed?: string;
+  wallets?: string[];
+  handles?: string[];
+  actors?: (string | number)[];
+}
+
+export interface WalletDetail extends Wallet {
+  cluster?: WalletCluster;
+  identifiers?: Identifier[];
+}
+
+export interface Breach {
+  id?: number;
+  name?: string;
+  type?: string;
+  primary_entity?: string;
+  source_url?: string;
+  ts_acquired?: string;
+  [key: string]: unknown;
+}
+
+export interface PivotRow {
+  name?: string;
+  type?: string;
+  primary_entity?: string;
+  kind?: string;
+  value?: string;
+  handle?: string;
+  site_id?: number | string;
+  [key: string]: unknown;
+}
+
+export interface PivotResult {
+  query?: string;
+  matches?: Breach[];
+  corpus?: Identifier[];
+  [key: string]: unknown;
+}
+
+export interface CaseHeader {
+  id?: number;
+  name?: string;
+  status?: string;
+  owner?: string;
+  notes?: string;
+  created_at?: string;
+  updated_at?: string;
+  n_members?: number;
+  [key: string]: unknown;
+}
+
+export interface CaseMember {
+  id?: number;
+  case_id?: number;
+  object_type?: string;
+  object_id?: number;
+  label?: string;
+  note?: string;
+  tag?: string;
+  added_by?: string;
+  ts?: string;
+  site_url?: string;
+  site_title?: string;
+  [key: string]: unknown;
+}
+
+export interface CaseDetail extends CaseHeader {
+  members?: CaseMember[];
+}
+
+export interface DetectRow {
+  url?: string;
+  title?: string;
+  category?: string;
+  last_scan?: string;
+  hint?: string;
+  [key: string]: unknown;
+}
+
+export interface OpsDetectResult {
+  gone_dark?: DetectRow[];
+  gone_dark_alerts?: number;
+  candidates?: DetectRow[];
+  successor_alerts?: number;
+  alerts?: number;
+  [key: string]: unknown;
+}
+
+export interface ImportResult {
+  breach?: string;
+  emails?: number;
+  btc?: number;
+  xmr?: number;
+  lines?: number;
+  identifiers?: number;
+  imported?: number;
+  examples?: JsonRecord[];
+  [key: string]: unknown;
+}
+
 export const getStats = () => apiGet<Stats>("/stats");
 export const getSites = () => apiGet<JsonRecord[]>("/sites");
 export const getSiteCatalog = (options?: { category?: string; q?: string; page?: number; perPage?: number }) =>
@@ -215,6 +374,59 @@ export const getTimeline = (start: string, end: string) =>
 export const runScan = (url: string, useTor = false) => apiPost<OperationResponse>("/scan", { url, use_tor: useTor });
 export const runCollect = () => apiPost<OperationResponse>("/collect", {});
 export const runRefresh = () => apiPost<OperationResponse>("/refresh", {});
+
+export const getEvidenceChain = (objtype: string, objid: string | number) =>
+  apiGet<EvidenceChain>(`/evidence/${encodeURIComponent(objtype)}/${encodeURIComponent(String(objid))}`);
+export const getSourceTrusts = () => apiGet<TrustRow[]>("/sources/trust");
+export const setSourceTrust = (source: string, trust: number, notes?: string) =>
+  apiPut<TrustRow>("/sources/trust", { source, trust, notes: notes ?? "" });
+export const getAttribution = (subjectType?: string, subject?: string) => {
+  const params = new URLSearchParams();
+  if (subjectType) params.set("subject_type", subjectType);
+  if (subject) params.set("subject", subject);
+  const qs = params.toString();
+  return apiGet<Attribution[]>(`/attribution${qs ? `?${qs}` : ""}`);
+};
+export const addAttribution = (input: { subject_type?: string; subject: string; claim?: string; statement?: string; confidence?: number; note?: string }) =>
+  apiPost<OperationResponse>("/attribution", {
+    subject_type: input.subject_type ?? "link",
+    subject: input.subject,
+    claim: input.claim ?? "",
+    statement: input.statement ?? "asserts",
+    confidence: input.confidence ?? 0.5,
+    note: input.note ?? "",
+  });
+export const getWallets = (options?: { q?: string; kind?: string; page?: number; perPage?: number }) =>
+  apiGet<{ items: Wallet[]; total: number; page: number; per_page: number }>(
+    `/wallets?page=${options?.page ?? 1}&per_page=${options?.perPage ?? 50}` +
+      (options?.q ? `&q=${encodeURIComponent(options.q)}` : "") +
+      (options?.kind ? `&kind=${encodeURIComponent(options.kind)}` : ""),
+  );
+export const getWallet = (address: string) => apiGet<WalletDetail>(`/wallets/${encodeURIComponent(address)}`);
+export const getWalletCluster = (address: string) =>
+  apiGet<WalletCluster>(`/clusters/${encodeURIComponent(address)}`);
+export const getBreaches = (q?: string) => apiGet<Breach[]>(`/breaches${q ? `?q=${encodeURIComponent(q)}` : ""}`);
+export const getPivots = (value?: string) => apiGet<PivotRow[] | PivotResult>(`/pivots${value ? `?value=${encodeURIComponent(value)}` : ""}`);
+export const importStealer = (text: string, source: string) =>
+  apiPost<ImportResult>("/import/stealer", { source, text });
+export const importHibp = () => apiPost<ImportResult>("/import/hibp", {});
+export const getCases = (status?: string) => apiGet<CaseHeader[]>(`/cases${status ? `?status=${encodeURIComponent(status)}` : ""}`);
+export const createCase = (input: { name: string; status?: string; owner?: string; notes?: string }) =>
+  apiPost<OperationResponse>("/cases", { name: input.name, status: input.status ?? "open", owner: input.owner ?? "analyst", notes: input.notes ?? "" });
+export const getCase = (cid: string | number) => apiGet<CaseDetail>(`/cases/${encodeURIComponent(String(cid))}`);
+export const patchCaseStatus = (cid: string | number, status: string) =>
+  apiPatch<OperationResponse>(`/cases/${encodeURIComponent(String(cid))}`, { status });
+export const addCaseMember = (cid: string | number, input: { object_type?: string; object_id: number; label?: string; note?: string; tag?: string }) =>
+  apiPost<OperationResponse>(`/cases/${encodeURIComponent(String(cid))}/members`, {
+    object_type: input.object_type ?? "site",
+    object_id: input.object_id,
+    label: input.label ?? "",
+    note: input.note ?? "",
+    tag: input.tag ?? "",
+  });
+export const removeCaseMember = (cid: string | number, mid: string | number) =>
+  apiDelete<OperationResponse>(`/cases/${encodeURIComponent(String(cid))}/members/${encodeURIComponent(String(mid))}`);
+export const runOpsDetect = () => apiPost<OpsDetectResult>("/ops/detect", {});
 
 export function asArray<T>(value: T[] | { results?: T[]; actors?: T[]; findings?: T[] } | undefined): T[] {
   if (Array.isArray(value)) return value;

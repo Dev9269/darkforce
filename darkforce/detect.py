@@ -105,10 +105,11 @@ def severity_rank(s):
     return {"critical": 4, "high": 3, "medium": 2, "low": 1}.get(s, 0)
 
 
-def pipeline_findings(site_id, db, findings, fps):
+def pipeline_findings(site_id, db, findings, fps, url="", source_id=None, method="detect"):
     rows = []
     for kind, sev, detail, conf in findings:
-        db.add_finding(site_id, kind, sev, detail, conf)
+        db.add_finding(site_id, kind, sev, detail, conf, url=url,
+                       source_id=source_id, method=method)
         rows.append({"kind": kind, "severity": sev, "detail": detail, "confidence": conf})
     return rows
 

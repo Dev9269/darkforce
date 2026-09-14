@@ -68,6 +68,45 @@ class CollectReq(BaseModel):
     use_tor: Optional[bool] = None
 
 
+class TrustReq(BaseModel):
+    source: str
+    trust: float = 0.5
+    notes: str = ""
+
+
+class AttrReq(BaseModel):
+    subject_type: str = "link"
+    subject: str
+    claim: str = ""
+    statement: str = "asserts"
+    confidence: float = 0.5
+    note: str = ""
+
+
+class StealerImportReq(BaseModel):
+    source: str = "stealer_log"
+    text: str = ""
+
+
+class CaseCreateReq(BaseModel):
+    name: str
+    status: str = "open"
+    owner: str = "analyst"
+    notes: str = ""
+
+
+class CaseStatusReq(BaseModel):
+    status: str
+
+
+class CaseMemberReq(BaseModel):
+    object_type: str = "site"
+    object_id: int
+    label: str = ""
+    note: str = ""
+    tag: str = ""
+
+
 @app.post("/api/login")
 def login(req: LoginReq):
     u = db.get_user(req.username)
@@ -128,6 +167,143 @@ def search(q: str = "", kind: str = "all", category: str = ""):
 @app.get("/api/identifiers")
 def identifiers():
     return db.all_identifiers()
+
+
+@app.get("/api/evidence/{objtype}/{objid}")
+def evidence(objtype: str, objid: int, who: dict = Depends(auth.require_role("viewer"))):
+    """Walk an identifier/finding/link/site/actor back to its observed raw
+    fragment, the rated source, and any analyst statements on it."""
+    return db.evidence_chain(objtype, objid)
+
+
+@app.get("/api/sources/trust")
+def trusts(who: dict = Depends(auth.require_role("viewer"))):
+    return db.source_trusts()
+
+
+@app.put("/api/sources/trust")
+def trust_put(req: TrustReq, who: dict = Depends(auth.require_role("analyst"))):
+    db.log_audit(who["username"], "analyst", "PUT", "/api/sources/trust", 200)
+    return db.set_source_trust(req.source, req.trust, req.notes, analyst=who["username"])
+
+
+@app.get("/api/attribution")
+def attribution_list(subject_type: str = "", subject: str = "",
+                     who: dict = Depends(auth.require_role("viewer"))):
+    return db.list_attribution(subject_type, subject)
+
+
+@app.post("/api/attribution")
+def attribution_add(req: AttrReq, who: dict = Depends(auth.require_role("analyst"))):
+    db.log_audit(who["username"], "analyst", "POST", "/api/attribution", 200)
+    try:
+        return db.add_attribution(req.subject_type, req.subject, req.claim, req.statement,
+                                  req.confidence, req.note, analyst=who["username"])
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+
+
+@app.get("/api/wallets")
+def wallets_all(q: str = "", kind: str = "", page: int = 1, per_page: int = 50):
+    rows, total = db.list_wallets(q, kind, page, per_page)
+    return {"items": rows, "total": total, "page": page, "per_page": per_page}
+
+
+@app.get("/api/wallets/{address}")
+def wallet_show(address: str):
+    detail = db.wallet_detail(address)
+    if not detail:
+        raise HTTPException(404, "wallets not found")
+    return detail
+
+
+@app.get("/api/clusters/{address}")
+def clusters_show(address: str):
+    return db.wallet_cluster(address)
+
+
+@app.get("/api/pivots")
+def pivots(value: str = ""):
+    return db.breach_pivots(value or None)
+
+
+@app.get("/api/breaches")
+def breaches_all(q: str = ""):
+    return db.list_breaches(q)
+
+
+@app.post("/api/import/stealer")
+def stealer_import(req: StealerImportReq, who: dict = Depends(auth.require_role("analyst"))):
+    from .collect import import_stealer_log
+    db.log_audit(who["username"], "analyst", "POST", "/api/import/stealer", 200)
+    try:
+        out = import_stealer_log(db, req.text.splitlines(), req.source)
+    except Exception as e:
+        raise HTTPException(400, f"stealer import failed: {e}")
+    return out
+
+
+@app.post("/api/import/hibp")
+def hibp_import(who: dict = Depends(auth.require_role("analyst"))):
+    db.log_audit(who["username"], "analyst", "POST", "/api/import/hibp", 200)
+    found = seeds.collect_hibp()
+    n = 0
+    for b in found:
+        db.upsert_breach(b["name"], "hibp", primary_entity=b["email"], source_url="hibp")
+        n += 1
+    return {"imported": n, "examples": found[:10]}
+
+
+@app.get("/api/cases")
+def cases_all(status: str = ""):
+    return db.list_cases(status or None)
+
+
+@app.post("/api/cases")
+def cases_create(req: CaseCreateReq, who: dict = Depends(auth.require_role("analyst"))):
+    cid = db.create_case(req.name, req.status, req.owner, req.notes)
+    if not cid:
+        raise HTTPException(409, "case name already exists")
+    db.log_audit(who["username"], "analyst", "POST", "/api/cases", 200)
+    return {"id": cid, "name": req.name, "status": req.status}
+
+
+@app.get("/api/cases/{cid}")
+def cases_show(cid: int):
+    c = db.get_case(cid)
+    if not c:
+        raise HTTPException(404, "case not found")
+    return c
+
+
+@app.patch("/api/cases/{cid}")
+def cases_status(cid: int, req: CaseStatusReq, who: dict = Depends(auth.require_role("analyst"))):
+    db.update_case_status(cid, req.status)
+    db.log_audit(who["username"], "analyst", "PATCH", f"/api/cases/{cid}", 200)
+    return {"id": cid, "status": req.status}
+
+
+@app.post("/api/cases/{cid}/members")
+def cases_member_add(cid: int, req: CaseMemberReq, who: dict = Depends(auth.require_role("analyst"))):
+    if not db.get_case(cid):
+        raise HTTPException(404, "case not found")
+    db.case_add_member(cid, req.object_type, req.object_id, req.label, req.note, req.tag,
+                       analyst=who["username"])
+    db.log_audit(who["username"], "analyst", "POST", f"/api/cases/{cid}/members", 200)
+    return {"case_id": cid, "object_type": req.object_type, "object_id": req.object_id}
+
+
+@app.delete("/api/cases/{cid}/members/{mid}")
+def cases_member_del(cid: int, mid: int, who: dict = Depends(auth.require_role("analyst"))):
+    db.case_remove_member(cid, mid)
+    return {"deleted": mid}
+
+
+@app.post("/api/ops/detect")
+def ops_detect(who: dict = Depends(auth.require_role("analyst"))):
+    """Run operational detection: gone-dark sites + successor-propaganda scan."""
+    db.log_audit(who["username"], "analyst", "POST", "/api/ops/detect", 200)
+    return db.detect_ops(days=14)
 
 
 @app.get("/api/actors")
@@ -320,7 +496,10 @@ def  scan(req: ScanReq, who: dict = Depends(auth.require_role("analyst"))):
                          category="scanned", status=str(getattr(snap, "status", "?")))
     det = {k: v for k, v in detect.fingerprint(snap).items() if v}
     findings, fp2 = detect.scan(snap)
-    rows = detect.pipeline_findings(sid, db, findings, fp2)
+    src = db.one("SELECT source_id FROM sites WHERE id=?", (sid,))
+    source_id = src["source_id"] if src else None
+    rows = detect.pipeline_findings(sid, db, findings, fp2, url=req.url,
+                                    source_id=source_id, method="detect:scan")
     return {"site_id": sid, "fingerprint": {k: v for k, v in fp.items() if v}, "findings": rows}
 
 

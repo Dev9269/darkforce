@@ -55,6 +55,56 @@ CREATE TABLE IF NOT EXISTS audit_log (
   username TEXT, role TEXT, method TEXT, path TEXT,
   status INTEGER, ts TEXT
 );
+CREATE TABLE IF NOT EXISTS observations (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  ts TEXT, source_id INTEGER, site_id INTEGER, url TEXT,
+  method TEXT, kind TEXT, raw TEXT,
+  content_hash TEXT, collector_version TEXT
+);
+CREATE UNIQUE INDEX IF NOT EXISTS ux_obs_hash ON observations(content_hash);
+CREATE INDEX IF NOT EXISTS ix_obs_site ON observations(site_id);
+CREATE TABLE IF NOT EXISTS link_evidence (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  link_id INTEGER, evidence TEXT, content_hash TEXT,
+  source_id INTEGER, ts TEXT
+);
+CREATE INDEX IF NOT EXISTS ix_link_ev_link ON link_evidence(link_id);
+CREATE TABLE IF NOT EXISTS sources_trust (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  source TEXT UNIQUE, source_id INTEGER,
+  trust REAL DEFAULT 0.5, rated_by TEXT, rated_at TEXT, notes TEXT
+);
+CREATE TABLE IF NOT EXISTS attribution (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  subject_type TEXT, subject TEXT, claim TEXT,
+  statement TEXT, confidence REAL DEFAULT 0, note TEXT,
+  analyst TEXT, ts TEXT
+);
+CREATE INDEX IF NOT EXISTS ix_attr_subject ON attribution(subject);
+CREATE TABLE IF NOT EXISTS wallets (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  address TEXT UNIQUE, kind TEXT, category TEXT,
+  first_seen TEXT, last_seen TEXT
+);
+CREATE INDEX IF NOT EXISTS ix_wallet_kind ON wallets(kind);
+CREATE TABLE IF NOT EXISTS breaches (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  name TEXT UNIQUE, type TEXT, primary_entity TEXT,
+  source_url TEXT, ts_acquired TEXT
+);
+CREATE INDEX IF NOT EXISTS ix_breach_entity ON breaches(primary_entity);
+CREATE TABLE IF NOT EXISTS cases (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  name TEXT UNIQUE, status TEXT DEFAULT 'open',
+  owner TEXT DEFAULT 'analyst', notes TEXT,
+  created_at TEXT, updated_at TEXT
+);
+CREATE TABLE IF NOT EXISTS case_members (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  case_id INTEGER, object_type TEXT, object_id INTEGER,
+  label TEXT, note TEXT, tag TEXT, added_by TEXT, ts TEXT
+);
+CREATE INDEX IF NOT EXISTS ix_case_members_case ON case_members(case_id);
 """
 
 PG_EXTRA_SCHEMA = """
@@ -83,6 +133,56 @@ CREATE TABLE IF NOT EXISTS audit_log (
   username TEXT, role TEXT, method TEXT, path TEXT,
   status INTEGER, ts TEXT
 );
+CREATE TABLE IF NOT EXISTS observations (
+  id BIGSERIAL PRIMARY KEY,
+  ts TEXT, source_id INTEGER, site_id INTEGER, url TEXT,
+  method TEXT, kind TEXT, raw TEXT,
+  content_hash TEXT, collector_version TEXT
+);
+CREATE UNIQUE INDEX IF NOT EXISTS ux_obs_hash ON observations(content_hash);
+CREATE INDEX IF NOT EXISTS ix_obs_site ON observations(site_id);
+CREATE TABLE IF NOT EXISTS link_evidence (
+  id BIGSERIAL PRIMARY KEY,
+  link_id INTEGER, evidence TEXT, content_hash TEXT,
+  source_id INTEGER, ts TEXT
+);
+CREATE INDEX IF NOT EXISTS ix_link_ev_link ON link_evidence(link_id);
+CREATE TABLE IF NOT EXISTS sources_trust (
+  id BIGSERIAL PRIMARY KEY,
+  source TEXT UNIQUE, source_id INTEGER,
+  trust REAL DEFAULT 0.5, rated_by TEXT, rated_at TEXT, notes TEXT
+);
+CREATE TABLE IF NOT EXISTS attribution (
+  id BIGSERIAL PRIMARY KEY,
+  subject_type TEXT, subject TEXT, claim TEXT,
+  statement TEXT, confidence REAL DEFAULT 0, note TEXT,
+  analyst TEXT, ts TEXT
+);
+CREATE INDEX IF NOT EXISTS ix_attr_subject ON attribution(subject);
+CREATE TABLE IF NOT EXISTS wallets (
+  id BIGSERIAL PRIMARY KEY,
+  address TEXT UNIQUE, kind TEXT, category TEXT,
+  first_seen TEXT, last_seen TEXT
+);
+CREATE INDEX IF NOT EXISTS ix_wallet_kind ON wallets(kind);
+CREATE TABLE IF NOT EXISTS breaches (
+  id BIGSERIAL PRIMARY KEY,
+  name TEXT UNIQUE, type TEXT, primary_entity TEXT,
+  source_url TEXT, ts_acquired TEXT
+);
+CREATE INDEX IF NOT EXISTS ix_breach_entity ON breaches(primary_entity);
+CREATE TABLE IF NOT EXISTS cases (
+  id BIGSERIAL PRIMARY KEY,
+  name TEXT UNIQUE, status TEXT DEFAULT 'open',
+  owner TEXT DEFAULT 'analyst', notes TEXT,
+  created_at TEXT, updated_at TEXT
+);
+CREATE TABLE IF NOT EXISTS case_members (
+  id BIGSERIAL PRIMARY KEY,
+  case_id INTEGER, object_type TEXT, object_id INTEGER,
+  label TEXT, note TEXT, tag TEXT, added_by TEXT, ts TEXT
+);
+CREATE INDEX IF NOT EXISTS ix_case_members_case ON case_members(case_id);
 """
 
 
@@ -298,17 +398,30 @@ class BaseDB:
         )
         return ch
 
-    def add_identifier(self, actor_id, handle, kind, value, detail="", site_id=None, url=""):
+    def add_identifier(self, actor_id, handle, kind, value, detail="", site_id=None, url="",
+                       source_id=None, content_hash=None, method=""):
+        if content_hash is None:
+            content_hash = self.add_observation(method or f"extract:{kind}", kind, value,
+                                                url=url, site_id=site_id, source_id=source_id)
         self.exe(
-            "INSERT INTO identifiers(actor_id,handle,kind,value,detail,site_id,url,first_seen,last_seen) "
-            "VALUES(?,?,?,?,?,?,?,?,?) ON CONFLICT(handle, kind, value) DO NOTHING",
-            (actor_id, handle, kind, value, detail, site_id, url, utcnow(), utcnow()),
+            "INSERT INTO identifiers(actor_id,handle,kind,value,detail,site_id,url,"
+            "first_seen,last_seen,source_id,content_hash,method) "
+            "VALUES(?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(handle, kind, value) DO NOTHING",
+            (actor_id, handle, kind, value, detail, site_id, url, utcnow(), utcnow(),
+             source_id, content_hash, method),
         )
 
-    def add_finding(self, site_id, kind, severity, detail, confidence, url=""):
+    def add_finding(self, site_id, kind, severity, detail, confidence, url="",
+                    source_id=None, content_hash=None, evidence=None, method=""):
+        if content_hash is None:
+            content_hash = self.add_observation(method or f"detect:{kind}", kind,
+                                                (evidence or detail)[:500],
+                                                url=url, site_id=site_id, source_id=source_id)
         self.exe(
-            "INSERT INTO findings(site_id,kind,severity,detail,confidence,url,first_seen) VALUES(?,?,?,?,?,?,?)",
-            (site_id, kind, severity, detail, confidence, url, utcnow()),
+            "INSERT INTO findings(site_id,kind,severity,detail,confidence,url,first_seen,"
+            "source_id,content_hash,evidence) VALUES(?,?,?,?,?,?,?,?,?,?)",
+            (site_id, kind, severity, detail, confidence, url, utcnow(),
+             source_id, content_hash, evidence or detail),
         )
         self._maybe_alert_from_finding(site_id, kind, severity, detail, confidence, url)
 
@@ -349,12 +462,366 @@ class BaseDB:
             ),
         )
 
-    def add_link(self, src_type, src_value, tgt_type, tgt_value, edge, confidence, evidence="", site_id=None):
-        self.exe(
-            "INSERT INTO links(src_type,src_value,tgt_type,tgt_value,edge,confidence,evidence,site_id) "
-            "VALUES(?,?,?,?,?,?,?,?) ON CONFLICT DO NOTHING",
-            (src_type, src_value, tgt_type, tgt_value, edge, confidence, evidence, site_id),
+    def add_link(self, src_type, src_value, tgt_type, tgt_value, edge, confidence, evidence="", site_id=None,
+                 source_id=None, content_hash=None):
+        if content_hash is None:
+            content_hash = self.add_observation(f"link:{edge}", edge, (evidence or edge)[:500],
+                                                url="", site_id=site_id, source_id=source_id)
+        cur = self.exe(
+            "INSERT INTO links(src_type,src_value,tgt_type,tgt_value,edge,confidence,evidence,site_id,"
+            "source_id,content_hash) VALUES(?,?,?,?,?,?,?,?,?,?) ON CONFLICT DO NOTHING",
+            (src_type, src_value, tgt_type, tgt_value, edge, confidence, evidence, site_id,
+             source_id, content_hash),
         )
+        link_id = self.one(
+            "SELECT id FROM links WHERE src_type=? AND src_value=? AND tgt_type=? AND tgt_value=? AND edge=?",
+            (src_type, src_value, tgt_type, tgt_value, edge))["id"]
+        self.exe(
+            "INSERT INTO link_evidence(link_id,evidence,content_hash,source_id,ts) VALUES(?,?,?,?,?)",
+            (link_id, (evidence or "")[:500], content_hash, source_id, utcnow()),
+        )
+        return cur
+
+    # ---------- evidence provenance ledger ----------
+    def add_observation(self, method, kind, raw, url="", site_id=None, source_id=None, collector_version=""):
+        """Record one observation (the raw, byte-capped fragment that a finding /
+        identifier / link derives from) and return its sha256 content-hash.
+
+        The hash is the walkable handle: every consumer row stores it, so any
+        claim resolves here for a verifiable chain of custody."""
+        import hashlib
+
+        raw = (raw or "")[:500]
+        ch = hashlib.sha256(raw.encode("utf-8", "ignore")).hexdigest()
+        self.exe(
+            "INSERT INTO observations(ts,source_id,site_id,url,method,kind,raw,content_hash,collector_version) "
+            "VALUES(?,?,?,?,?,?,?,?,?) ON CONFLICT(content_hash) DO NOTHING",
+            (utcnow(), source_id, site_id, url, method, kind, raw, ch, collector_version),
+        )
+        return ch
+
+    def observation_by_hash(self, content_hash):
+        r = self.one("SELECT * FROM observations WHERE content_hash=?", (content_hash,))
+        if not r:
+            return None
+        src_info = self.one("SELECT * FROM sources WHERE id=?", (r["source_id"],)) if r["source_id"] else None
+        src_name = src_info["name"] if src_info else ""
+        trust = None
+        if src_name:
+            t = self.one("SELECT trust FROM sources_trust WHERE source=?", (src_name,))
+            if t:
+                trust = t["trust"]
+        return {
+            **r,
+            "source_name": src_name,
+            "source_type": src_info["type"] if src_info else "",
+            "trust": trust,
+        }
+
+    def source_trusts(self):
+        rows = [dict(r) for r in self.q(
+            "SELECT st.*, COALESCE(s.name, st.source) source_name, s.type source_type "
+            "FROM sources_trust st LEFT JOIN sources s ON s.id=st.source_id ORDER BY trust DESC")]
+        return rows
+
+    def set_source_trust(self, source, trust, notes="", analyst="analyst"):
+        self.exe(
+            "INSERT INTO sources_trust(source,trust,rated_by,rated_at,notes) VALUES(?,?,?,?,?) "
+            "ON CONFLICT(source) DO UPDATE SET trust=excluded.trust, rated_by=excluded.rated_by, "
+            "rated_at=excluded.rated_at, notes=excluded.notes",
+            (source, min(max(float(trust), 0.0), 1.0), analyst, utcnow(), notes),
+        )
+        return {"source": source, "trust": min(max(float(trust), 0.0), 1.0)}
+
+    def evidence_chain(self, objtype, objid):
+        """Resolve a stored object (identifier/finding/link/site/actor) back to
+        its observation(s), the rated source, and any analyst statements on it."""
+        objtype = (objtype or "").lower().rstrip("s")
+        out = {"type": objtype, "id": objid, "object": None,
+               "observations": [], "attribution": [], "trust": None}
+        try:
+            if objtype == "identifier":
+                out["object"] = self.one("SELECT * FROM identifiers WHERE id=?", (objid,))
+            elif objtype == "finding":
+                out["object"] = self.one(
+                    "SELECT f.*, s.url site_url, s.title FROM findings f LEFT JOIN sites s ON s.id=f.site_id "
+                    "WHERE f.id=?", (objid,))
+            elif objtype == "link":
+                out["object"] = self.one("SELECT * FROM links WHERE id=?", (objid,))
+            elif objtype == "site":
+                out["object"] = self.one("SELECT * FROM sites WHERE id=?", (objid,))
+            elif objtype == "actor":
+                out["object"] = self.one("SELECT * FROM actors WHERE id=?", (objid,))
+        except Exception:
+            pass
+        if not out["object"]:
+            return out
+        ch = out["object"].get("content_hash")
+        if ch:
+            obs = self.observation_by_hash(ch)
+            if obs:
+                out["observations"].append(obs)
+                out["trust"] = obs.get("trust")
+        if objtype == "link":
+            for le in self.q("SELECT * FROM link_evidence WHERE link_id=?", (objid,)):
+                obs = self.observation_by_hash(le["content_hash"])
+                if obs:
+                    out["observations"].append({**obs, "evidence": le["evidence"]})
+        subj = out["object"].get("url") or out["object"].get("canon") or out["object"].get("value") or ""
+        stmts = [dict(r) for r in self.q(
+            "SELECT * FROM attribution WHERE subject=? AND subject_type=? ORDER BY id DESC LIMIT 20",
+            (subj, objtype))]
+        if not stmts and ch:
+            stmts = [dict(r) for r in self.q(
+                "SELECT * FROM attribution WHERE claim=? ORDER BY id DESC LIMIT 20", (ch,))]
+        out["attribution"] = stmts
+        return out
+
+    def add_attribution(self, subject_type, subject, claim, statement="asserts",
+                        confidence=0.5, note="", analyst="analyst"):
+        """Analyst statement about an attribution claim (asserts / denies / disputes)."""
+        if statement not in ("asserts", "denies", "disputes"):
+            raise ValueError("statement must be asserts|denies|disputes")
+        self.exe(
+            "INSERT INTO attribution(subject_type,subject,claim,statement,confidence,note,analyst,ts) "
+            "VALUES(?,?,?,?,?,?,?,?)",
+            (subject_type, subject, claim, statement, confidence, note, analyst, utcnow()),
+        )
+        return {"subject": subject, "statement": statement, "confidence": confidence}
+
+    def list_attribution(self, subject_type="", subject=""):
+        w, args = [], []
+        if subject_type:
+            w.append("subject_type=?")
+            args.append(subject_type)
+        if subject:
+            w.append("subject LIKE ?")
+            args.append(f"%{subject}%")
+        wsql = (" WHERE " + " AND ".join(w)) if w else ""
+        return [dict(r) for r in self.q(
+            "SELECT * FROM attribution" + wsql + " ORDER BY ts DESC, id DESC LIMIT 200", tuple(args))]
+
+    # ---------- wallets / breaches / pivots ----------
+    def upsert_wallet(self, address, kind, category="", first_seen=None):
+        ts = first_seen or utcnow()
+        self.exe(
+            "INSERT INTO wallets(address,kind,category,first_seen,last_seen) VALUES(?,?,?,?,?) "
+            "ON CONFLICT(address) DO UPDATE SET last_seen=excluded.last_seen",
+            (address, kind, category, ts, ts))
+        return self.one("SELECT id FROM wallets WHERE address=?", (address,))["id"]
+
+    def list_wallets(self, q="", kind="", page=1, per_page=50):
+        page = max(1, int(page))
+        per_page = min(max(1, int(per_page or 50)), 500)
+        where, args = [], []
+        if kind:
+            where.append("w.kind=?")
+            args.append(kind)
+        if q and q.strip():
+            where.append("w.address LIKE ?")
+            args.append(f"%{q.strip()}%")
+        wsql = (" WHERE " + " AND ".join(where)) if where else ""
+        base = ("SELECT w.*, (SELECT COUNT(*) FROM identifiers i WHERE i.kind=w.kind AND i.value=w.address) "
+                "n_identifiers FROM wallets w" + wsql)
+        total = self.one("SELECT COUNT(*) c FROM (" + base + ") t", tuple(args))["c"]
+        rows = [dict(r) for r in self.q(
+            base + " ORDER BY w.last_seen DESC, w.id DESC LIMIT ? OFFSET ?",
+            tuple(args) + (per_page, (page - 1) * per_page))]
+        return rows, total
+
+    def wallet_detail(self, address):
+        w = self.one("SELECT * FROM wallets WHERE address=?", (address,))
+        if not w:
+            return None
+        return {
+            **w,
+            "cluster": self.wallet_cluster(address),
+            "identifiers": [dict(r) for r in self.q(
+                "SELECT * FROM identifiers WHERE (kind='btc' OR kind='xmr') AND value=? ORDER BY id",
+                (address,))]
+            if w["kind"] in ("btc", "xmr")
+            else [dict(r) for r in self.q(
+                "SELECT * FROM identifiers WHERE value=? ORDER BY id", (address,))],
+        }
+
+    def wallet_cluster(self, address, depth=6):
+        """Transitive closure over 'reused wallet' edges: starting from one
+        address, collect everything the actors/handles that use it also use.
+
+        Casual offenders reuse wallets across markets, so this is the fastest
+        route to a cross-corpus persona."""
+        addrs = {address}
+        seen_handles, seen_actors = set(), set()
+        for _ in range(depth):
+            old = set(addrs)
+            for a in list(addrs):
+                for r in self.q(
+                        "SELECT DISTINCT handle, actor_id FROM identifiers "
+                        "WHERE (kind='btc' OR kind='xmr') AND value=?", (a,)):
+                    if r["handle"]:
+                        seen_handles.add(r["handle"])
+                    if r["actor_id"]:
+                        seen_actors.add(r["actor_id"])
+            if seen_handles:
+                ph = ",".join("?" * len(seen_handles))
+                for r in self.q(
+                        "SELECT DISTINCT value FROM identifiers WHERE (kind='btc' OR kind='xmr') "
+                        "AND handle IN (" + ph + ")", tuple(seen_handles)):
+                    addrs.add(r["value"])
+            if seen_actors:
+                ph = ",".join("?" * len(seen_actors))
+                for r in self.q(
+                        "SELECT DISTINCT value FROM identifiers WHERE (kind='btc' OR kind='xmr') "
+                        "AND actor_id IN (" + ph + ")", tuple(seen_actors)):
+                    addrs.add(r["value"])
+            if addrs == old:
+                break
+        return {"seed": address, "wallets": sorted(addrs),
+                "handles": sorted(seen_handles), "actors": sorted(seen_actors)}
+
+    def upsert_breach(self, name, type_, primary_entity="", source_url=""):
+        self.exe(
+            "INSERT INTO breaches(name,type,primary_entity,source_url,ts_acquired) VALUES(?,?,?,?,?) "
+            "ON CONFLICT(name) DO UPDATE SET ts_acquired=excluded.ts_acquired",
+            (name, type_, primary_entity, source_url[:500], utcnow()))
+        return self.one("SELECT id FROM breaches WHERE name=?", (name,))["id"]
+
+    def list_breaches(self, q="", limit=200):
+        if q and q.strip():
+            like = f"%{q.strip().lower()}%"
+            return [dict(r) for r in self.q(
+                "SELECT * FROM breaches WHERE lower(name||' '||COALESCE(primary_entity,'')) LIKE ? "
+                "ORDER BY ts_acquired DESC LIMIT ?", (like, limit))]
+        return [dict(r) for r in self.q(
+            "SELECT * FROM breaches ORDER BY ts_acquired DESC LIMIT ?", (limit,))]
+
+    def breach_pivots(self, value=None):
+        """Cross-correlate identifier values against known breach records.
+        With a value: exact/similar entity match. Without: every corpus
+        identifier that also appears as a breach primary-entity."""
+        if value:
+            low = value.strip().lower()
+            matches = [dict(r) for r in self.q(
+                "SELECT * FROM breaches WHERE lower(COALESCE(primary_entity,'')) LIKE ? LIMIT 50",
+                (f"%{low}%",))]
+            return {"query": value, "matches": matches,
+                    "corpus": [dict(r) for r in self.q(
+                        "SELECT * FROM identifiers WHERE lower(value)=? LIMIT 20", (low,))]}
+        return [dict(r) for r in self.q(
+            "SELECT DISTINCT b.name, b.type, b.primary_entity, i.kind, i.value, i.handle, i.site_id "
+            "FROM breaches b JOIN identifiers i ON lower(i.value)=lower(b.primary_entity) LIMIT 200")]
+
+    def record_breach_pivot(self, value, breach_name, edge="leaked_in", confidence=0.85):
+        self.add_link("identifier", value, "breach", breach_name, edge, confidence,
+                      evidence=f"{value} appears in breach corpus '{breach_name}'")
+
+    # ---------- case folders ----------
+    def create_case(self, name, status="open", owner="analyst", notes=""):
+        try:
+            self.exe(
+                "INSERT INTO cases(name,status,owner,notes,created_at,updated_at) VALUES(?,?,?,?,?,?)",
+                (name, status, owner, notes, utcnow(), utcnow()))
+        except Exception:
+            return None  # name conflict
+        return self.one("SELECT id FROM cases WHERE name=?", (name,))["id"]
+
+    def list_cases(self, status=""):
+        w, args = "", ()
+        if status:
+            w, args = " WHERE status=?", (status,)
+        return [dict(r) for r in self.q(
+            "SELECT c.*, (SELECT COUNT(*) FROM case_members m WHERE m.case_id=c.id) n_members "
+            "FROM cases c" + w + " ORDER BY c.updated_at DESC", args)]
+
+    def get_case(self, case_id):
+        c = self.one("SELECT * FROM cases WHERE id=?", (case_id,))
+        if not c:
+            return None
+        members = [dict(r) for r in self.q(
+            "SELECT m.*, s.url site_url, s.title site_title FROM case_members m "
+            "LEFT JOIN sites s ON s.id=m.object_id AND m.object_type='site' "
+            "WHERE m.case_id=? ORDER BY m.id DESC", (case_id,))]
+        return {**c, "n_members": len(members), "members": members}
+
+    def update_case_status(self, case_id, status):
+        self.exe("UPDATE cases SET status=?, updated_at=? WHERE id=?", (status, utcnow(), case_id))
+
+    def case_add_member(self, case_id, object_type, object_id, label="", note="", tag="", analyst="analyst"):
+        self.exe(
+            "INSERT INTO case_members(case_id,object_type,object_id,label,note,tag,added_by,ts) "
+            "VALUES(?,?,?,?,?,?,?,?)",
+            (case_id, object_type, object_id, label[:200], note[:500], tag[:50], analyst, utcnow()))
+        self.update_case_status(case_id, self.one("SELECT status FROM cases WHERE id=?", (case_id,))["status"])
+        return True
+
+    def case_remove_member(self, case_id, member_id):
+        self.exe("DELETE FROM case_members WHERE id=? AND case_id=?", (member_id, case_id))
+
+    # ---------- ops: gone-dark / successor detection ----------
+    def sites_gone_dark(self, days=14):
+        """Sites that previously resolved (content_hash present) but whose most
+        recent fetch FAILED (status='down') - i.e. the operator went dark or
+        rotated the address. Returns candidates for analyst review."""
+        return [dict(r) for r in self.q(
+            "SELECT url, title, category, server, first_seen, last_scan FROM sites "
+            "WHERE content_hash IS NOT NULL AND status='down' "
+            "AND last_scan >= ? ORDER BY last_scan DESC LIMIT 100", (days_ago(days),))]
+
+    def detect_successors(self, freshness_hours=720):
+        """Successor-propaganda detection: new sites whose digest mentions a
+        defunct market or matches a watchlist name. Raises successor_suspected
+        alerts with the matched market name as evidence."""
+        import re
+
+        hits, n = [], 0
+        wl = [w for w in self.list_watchlists() if w["enabled"]]
+        for row in self.sites_all():
+            if row["first_seen"] and row["first_seen"] < days_ago(freshness_hours / 24):
+                continue
+            text = (row["title"] or "") + " " + (row.get("digest") or "")
+            low = text.lower()
+            for pat in ("successor", "continuation", "new home of", "we are back",
+                        "formerly", "ex-",
+                        "restructured", "moved to", "now operating as"):
+                if pat in low:
+                    hits.append({"url": row["url"], "title": row["title"], "hint": pat})
+                    break
+            for w in wl:
+                if w["pattern"] and w["pattern"].lower() in low:
+                    self.exe(
+                        "INSERT INTO alerts(kind,title,detail,url,confidence,created_at) "
+                        "VALUES(?,?,?,?,?,?)",
+                        ("successor_suspected", f"Successor candidate: {w['name'] or w['pattern']}",
+                         f"{row['url']} mentions '{w['pattern']}'", row["url"], 0.7, utcnow()))
+                    n += 1
+                    hits.append({"url": row["url"], "title": row["title"],
+                                 "hint": f"watchlist {w['pattern']}"})
+                    break
+        return {"candidates": hits, "alerts": n}
+
+    def detect_ops(self, days=14):
+        """Run everywhere-facing operational detection: mark+collect gone-dark
+        sites and scan fresh sites for successor propaganda."""
+        gone = [dict(r) for r in self.q(
+            "SELECT url, title, category, last_scan FROM sites "
+            "WHERE content_hash IS NOT NULL AND status='down' AND last_scan>=? LIMIT 50",
+            (days_ago(days),))]
+        new_alerts = 0
+        for g in gone:
+            dup = self.one(
+                "SELECT COUNT(*) c FROM alerts WHERE kind='sites_gone_dark' AND COALESCE(url,'')=? "
+                "AND created_at > ?", (g["url"], days_ago(1)))["c"]
+            if dup:
+                continue
+            self.exe(
+                "INSERT INTO alerts(kind,title,detail,url,confidence,created_at) "
+                "VALUES(?,?,?,?,?,?)",
+                ("sites_gone_dark", "Site went dark: " + (g["title"] or g["url"]),
+                 f"previously reachable; last scan {g['last_scan']}", g["url"], 0.8, utcnow()))
+            new_alerts += 1
+        succ = self.detect_successors()
+        return {"gone_dark": gone, "gone_dark_alerts": new_alerts,
+                **succ, "successor_alerts": succ["alerts"]}
 
     # ---------- queries ----------
     def stats(self):
@@ -367,6 +834,8 @@ class BaseDB:
             "sites": self.one("SELECT COUNT(*) c FROM sites")["c"],
             "findings": self.one("SELECT COUNT(*) c FROM findings")["c"],
             "links": self.one("SELECT COUNT(*) c FROM links")["c"],
+            "observations": self.one("SELECT COUNT(*) c FROM observations")["c"],
+            "attribution": self.one("SELECT COUNT(*) c FROM attribution")["c"],
             "sources": [s["name"] for s in sources],
             "source_status": "SEEDED" if sources else "EMPTY",
             "source": sources[0]["name"] if sources else "",
@@ -551,7 +1020,8 @@ class BaseDB:
                 tn = f"{l['tgt_type']}:{l['tgt_value'][:18]}"
                 add_n(sn, l["src_value"][:26], l["src_type"])
                 add_n(tn, l["tgt_value"][:26], l["tgt_type"])
-                edges.append({"s": sn, "t": tn, "e": l["edge"], "w": l["confidence"]})
+                edges.append({"s": sn, "t": tn, "e": l["edge"], "w": l["confidence"],
+                              "ev": (dict(l).get("content_hash") or "")})
         return {"nodes": list(nodes.values()), "edges": edges}
 
     def actor_summary(self, actor_id):
@@ -687,22 +1157,45 @@ class BaseDB:
         return False
 
     def _ensure_columns(self, conn=None):
-        """Additive schema migrations so existing stores keep working after new columns land."""
-        try:
-            cols = [r["name"] for r in self.q("PRAGMA table_info(sites)")]
-        except Exception:
+        """Additive schema migrations so existing stores keep working after new
+        columns land. Idempotent on both SQLite (PRAGMA) and Postgres
+        (information_schema); never drops or rewrites data."""
+        backend = getattr(self, "backend", "sqlite")
+
+        def cols_for(table):
             try:
-                cols = [r["column_name"] for r in self.q(
-                    "SELECT column_name FROM information_schema.columns WHERE table_name='sites'")]
+                if backend == "postgres":
+                    return [r["column_name"] for r in self.q(
+                        "SELECT column_name FROM information_schema.columns WHERE table_name=?",
+                        (table,))]
+                return [r["name"] for r in self.q(f"PRAGMA table_info({table})")]
             except Exception:
-                cols = []
-        if "lang" in cols:
-            return
-        try:
-            self.exe("ALTER TABLE sites ADD COLUMN lang TEXT")
-            self.q("SELECT lang FROM sites LIMIT 0")  # force PG to plan; harmless on sqlite
-        except Exception:
-            pass
+                return []
+
+        def ensure(table, col, ddl):
+            if col in cols_for(table):
+                return
+            try:
+                self.exe(f"ALTER TABLE {table} ADD COLUMN {col} {ddl}")
+            except Exception:
+                # a failed ALTER (e.g. aborted transaction) must not poison the
+                # connection for the remaining migrations
+                try:
+                    self.conn.rollback()
+                except Exception:
+                    pass  # cleared next boot if the ALTER truly never landed
+
+        ensure("sites", "lang", "TEXT")
+        ensure("identifiers", "source_id", "INTEGER")
+        ensure("identifiers", "content_hash", "TEXT")
+        ensure("identifiers", "method", "TEXT")
+        ensure("findings", "source_id", "INTEGER")
+        ensure("findings", "content_hash", "TEXT")
+        ensure("findings", "evidence", "TEXT")
+        ensure("links", "source_id", "INTEGER")
+        ensure("links", "content_hash", "TEXT")
+        ensure("observations", "source_id", "INTEGER")
+        ensure("observations", "site_id", "INTEGER")
 
     def _now(self):
         import datetime
@@ -712,6 +1205,7 @@ class BaseDB:
 class SQLiteDB(BaseDB):
     def __init__(self, path=DB_PATH):
         self.path = path
+        self.backend = "sqlite"
         os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
         self.conn = sqlite3.connect(path, check_same_thread=False)
         self.conn.row_factory = sqlite3.Row
@@ -750,6 +1244,7 @@ class PostgresDB(BaseDB):
         if psycopg2 is None:
             raise RuntimeError("psycopg2 not installed; DATABASE_URL can't be used")
         self.dsn = dsn or DATABASE_URL
+        self.backend = "postgres"
         self._thread_local = threading.local()
         with self._conn() as conn:
             with conn.cursor() as cur:

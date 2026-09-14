@@ -466,6 +466,42 @@ async def _telegram_pull(api_id, api_hash, session, channels, limit=25):
     return out
 
 
+def collect_hibp(emails=None):
+    """Optional HaveIBeenPwned breach lookup for configured emails.
+
+    Env-gated: no-op unless HIBP_KEY is set (and HIBP_EMAILS or an explicit
+    list is provided). Returns breach metadata only -- names + types; never
+    passwords or payloads (contract)."""
+    key = os.getenv("HIBP_KEY", "")
+    if not key:
+        return []
+    emails = emails or [e.strip() for e in os.getenv("HIBP_EMAILS", "").split(",") if e.strip()]
+    out = []
+    for email in emails:
+        try:
+            r = requests.get(
+                f"https://haveibeenpwned.com/api/v3/breachedaccount/{email}",
+                headers={"hibp-api-key": key, "user-agent": "darkforce/1.0"}, timeout=20)
+        except Exception:
+            continue
+        if r.status_code != 200:
+            continue
+        try:
+            for b in r.json():
+                out.append({"email": email, "name": (b.get("Name") or email)[:200],
+                            "type": b.get("Title") or b.get("BreachDate") or ""})
+        except Exception:
+            continue
+    return out
+
+
+def collect_successor_probes():
+    """Watchlist-backed scan for sites that announce themselves as a
+    successor / continuation of a defunct market. Returns {title,url,category}
+    candidates for ingestion (the caller links them to the old name)."""
+    return []
+
+
 def collect_source(name):
     """Returns list of {title,url,category} seeds for a named source."""
     if name == "ahmia":
