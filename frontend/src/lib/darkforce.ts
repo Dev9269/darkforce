@@ -345,6 +345,36 @@ export const getSiteCatalog = (options?: { category?: string; q?: string; page?:
   );
 export const getCategories = () => apiGet<CategoriesResponse>("/categories");
 export const getAlerts = () => apiGet<LiveAlert[]>("/alerts");
+
+export interface ResourceSite {
+  id?: string | number;
+  url?: string;
+  title?: string;
+  category?: string;
+  status?: string;
+  first_seen?: string;
+  last_scan?: string;
+  lang?: string;
+  headline?: string | null;
+  [key: string]: unknown;
+}
+
+export interface NewsItem {
+  id?: string | number;
+  handle?: string;
+  title?: string;
+  url?: string;
+  ts?: string;
+  site_id?: string | number;
+  site_url?: string;
+  site_title?: string;
+  status?: string;
+  [key: string]: unknown;
+}
+
+export const getResources = (category?: string) =>
+  apiGet<ResourceSite[]>(`/resources${category ? `?category=${encodeURIComponent(category)}` : ""}`);
+export const getNews = (limit = 60) => apiGet<NewsItem[]>(`/news?limit=${limit}`);
 export const getIdentifiers = () => apiGet<Identifier[]>("/identifiers");
 export const getActors = () => apiGet<Actor[]>("/actors");
 export const getNetworkAnalysis = () =>

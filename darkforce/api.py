@@ -459,6 +459,79 @@ def categories_ref():
     }
 
 
+RESOURCE_CATEGORIES = ("resources", "hacking tools", "malware", "leaked data")
+
+
+@app.get("/api/resources")
+def resources_catalog(category: str = ""):
+    """Free dark-web resource catalog (tool/crack/warez boards, malware,
+    leak references) -- metadata only: address, title, category, status,
+    last scan, headline. Filter by one canonical category via ?category=."""
+    from darkforce.categories import normalize_category
+    if category:
+        cat = normalize_category(category)
+        cats = (cat,) if cat in RESOURCE_CATEGORIES else RESOURCE_CATEGORIES
+    else:
+        cats = RESOURCE_CATEGORIES
+    rows = db.q(
+        "SELECT s.id, s.url, s.title, s.category, s.status, s.first_seen, s.last_scan, s.lang "
+        "FROM sites s WHERE s.category IN (" + ",".join("?" * len(cats)) + ") "
+        "  AND (s.title IS NULL OR s.title NOT LIKE 'URLhaus%') "
+        "ORDER BY s.last_scan DESC, s.id DESC LIMIT 250",
+        cats,
+    )
+    if rows:
+        ids = [r["id"] for r in rows]
+        posts = db.q(
+            "SELECT p.site_id, p.title FROM posts p WHERE p.site_id IN (" + ",".join("?" * len(ids)) + ") "
+            "ORDER BY COALESCE(p.ts, '') DESC, p.id DESC",
+            ids,
+        )
+        seen = set()
+        headline = {}
+        for p in posts:
+            if p["site_id"] not in seen:
+                headline[p["site_id"]] = p["title"]
+                seen.add(p["site_id"])
+        out = []
+        for r in rows:
+            item = dict(r)
+            item["category"] = normalize_category(r["category"] or "other")
+            item["headline"] = headline.get(r["id"])
+            out.append(item)
+        return out
+    return []
+
+
+@app.get("/api/news")
+def news_feed(limit: int = 60):
+    """Darknet news feed: latest posts from news-category sites + status
+    boards, newest first. Called by the Darknet News page which re-polls
+    every 60s for real-time updates while the collector re-scans."""
+    limit = max(1, min(limit, 250))
+    rows = db.q(
+        "SELECT p.id, p.handle, p.title, p.url, p.ts, s.id site_id, s.url site_url, "
+        "       s.title site_title, s.status "
+        "FROM posts p JOIN sites s ON s.id = p.site_id "
+        "WHERE s.category = ? "
+        "ORDER BY COALESCE(p.ts, s.last_scan) DESC, p.id DESC LIMIT ?",
+        ("news", limit),
+    )
+    # fall back to post-title-level news classification when a news site is
+    # still un-crawled but its posts exist under a provenance category
+    extra = db.q(
+        "SELECT p.id, p.handle, p.title, p.url, p.ts, s.id site_id, s.url site_url, "
+        "       s.title site_title, s.status "
+        "FROM posts p JOIN sites s ON s.id = p.site_id "
+        "WHERE s.category NOT IN ('news') AND (lower(p.title) LIKE '%news%' "
+        "   OR lower(p.title) LIKE '%breaking%' OR lower(p.title) LIKE '%coverage%') "
+        "ORDER BY COALESCE(p.ts, s.last_scan) DESC, p.id DESC LIMIT ?",
+        (limit,),
+    )
+    merged = {p["id"]: dict(p) for p in [*rows, *extra]}
+    return sorted(merged.values(), key=lambda p: p.get("ts") or "", reverse=True)[:limit]
+
+
 @app.get("/api/stylo/{handle}")
 def stylo_for(handle: str):
     return stylo.match_handle(db, handle)

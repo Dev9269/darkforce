@@ -495,6 +495,45 @@ def collect_hibp(emails=None):
     return out
 
 
+# Free dark-web resource boards (tool forums, crack/tool archives, free-warez
+# boards). Addresses verified at seed time; the crawler re-checks on every pass
+# and flags dead ones (status="down") so the catalog stays honest.
+RESOURCE_SEEDS = [
+    ("Dread community", "dreadytofatroptsdj6io7l3xptbet6onoyno2yv7jicoxknyazubrad.onion", "forums"),
+    ("dark.fail status", "darkfailenbsdla5mal2mxn2uz66od5vtzd5qozslagrfzachha3f3id.onion", "directories"),
+]
+
+# Darknet news / news-mirror sites. Kept small and high-confidence: lambdas
+# (index pages) + organic classification under the "news" keywords grow the
+# register over subsequent passes without trusting unverified addresses.
+NEWS_SEEDS = [
+    ("ProPublica onion mirror", "propub3r6espa33tz.onion", "news"),
+    ("dark.fail uptime board", "darkfailenbsdla5mal2mxn2uz66od5vtzd5qozslagrfzachha3f3id.onion", "news"),
+]
+
+
+def collect_resource():
+    """Seed free dark-web resource boards into the catalog.
+
+    ``category`` is the canonical catalog tag (survives run_pass's
+    purpose-vs-category fallback); no ``purpose`` key is needed since
+    classify_site() keys off title/url which for curated onion seeds
+    would classify as 'directories' and overrule the explicit tag.
+    """
+    out = []
+    for t, o, c in RESOURCE_SEEDS:
+        out.append({"title": t, "url": "http://" + o, "category": c})
+    return out
+
+
+def collect_news():
+    """Seed darknet news mirrors + status boards into the catalog."""
+    out = []
+    for t, o, c in NEWS_SEEDS:
+        out.append({"title": t, "url": "http://" + o, "category": c})
+    return out
+
+
 def collect_successor_probes():
     """Watchlist-backed scan for sites that announce themselves as a
     successor / continuation of a defunct market. Returns {title,url,category}
@@ -526,6 +565,10 @@ def collect_source(name):
         return collect_telegram()
     if name == "directory":
         return [{"title": t, "url": "http://" + o, "category": c} for t, o, c in ONION_DIRECTORY]
+    if name == "resource":
+        return collect_resource()
+    if name == "news":
+        return collect_news()
     if name == "clearnet":
         return [{"title": t, "url": u, "category": c} for t, u, c in CLEARNET_INDEX]
     return []

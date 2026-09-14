@@ -151,6 +151,23 @@ def _page_body(soup, max_len=4000):
     return txt[:max_len]
 
 
+def _crawl_classify(snap, url, max_text=1600):
+    """Re-tag a fetched page with the analyst taxonomy from its visible content.
+
+    Metadata only: title, url and a text prefix are fed to classify_site; the
+    result is the canonical category used for the Resources / Darknet News
+    catalog views. Never stores page content itself.
+    """
+    try:
+        from darkforce import categories as _cats
+        soup = BeautifulSoup(snap.html, "html.parser")
+        title = soup.title.get_text(" ", strip=True) if soup.title else ""
+        text = _page_body(soup, max_len=max_text)
+        return _cats.classify_site(title, url, text)
+    except Exception:
+        return ""
+
+
 def crawl_and_ingest(db, url, use_tor=False, timeout=20):
     """Fetch one site and ingest actors, handles, identifiers, findings and a post.
 
@@ -187,6 +204,9 @@ def crawl_and_ingest(db, url, use_tor=False, timeout=20):
             kw_cat = prev_cat
         else:
             kw_cat = "onion" if ".onion" in (urlparse(url).hostname or "") else "clearnet"
+        _tagged = _crawl_classify(snap, url)
+        if _tagged and _tagged != "other":
+            kw_cat = _tagged
         site_id = db.upsert_site(
             url,
             server=fp["server"] or "",

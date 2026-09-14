@@ -12,6 +12,7 @@ CANONICAL = [
     "drugs",
     "hacking",
     "hacking tools",
+    "resources",
     "markets",
     "financial/carding",
     "crypto",
@@ -24,6 +25,7 @@ CANONICAL = [
     "forums",
     "privacy/hosting",
     "directories",
+    "news",
     "ransomware",
     "malware",
     "leaked data",
@@ -47,6 +49,24 @@ _ALIASES = {
     "hacking tool": "hacking tools",
     "porn": "porn",
     "adult": "porn",
+    "resource": "resources",
+    "resource board": "resources",
+    "free tools": "resources",
+    "free tool": "resources",
+    "free crack": "resources",
+    "cracked": "resources",
+    "crackz": "resources",
+    "crack": "resources",
+    "keygen": "resources",
+    "freecraz": "resources",
+    "free resource": "resources",
+    "news": "news",
+    "darknet news": "news",
+    "dark web news": "news",
+    "onion news": "news",
+    "breaking": "news",
+    "journal": "news",
+    "webzine": "news",
     "leak": "leaked data",
     "leaks": "leaked data",
     "dump": "leaked data",
@@ -90,11 +110,20 @@ def normalize_category(raw):
     key = str(raw).strip().lower()
     if key in CANONICAL:
         return key
-    return _ALIASES.get(key, "other")
+    hit = _ALIASES.get(key)
+    if hit:
+        return hit
+    # word-boundary scan: "cracked tools", "free tool dumps", "daily news wire";
+    # longest alias first so "cracked" wins over the generic "tools".
+    for alias, canon in sorted(_ALIASES.items(), key=lambda kv: len(kv[0]), reverse=True):
+        if alias in key:
+            return canon
+    return "other"
 
 # Order matters: first matching group wins.
 RULES = [
     "hacking tools",
+    "resources",
     "hacking",
     "drugs",
     "weapons",
@@ -114,6 +143,7 @@ RULES = [
     "ransomware",
     "malware",
     "directories",
+    "news",
     "other",
 ]
 
@@ -141,6 +171,22 @@ KEYWORDS = {
         r"\bphishing ?kit\b", r"\bphishing ?panel\b", r"\bemail spammer\b",
         r"\bsms bomber\b", r"\bmass mailer\b", r"\bcarding tutorial",
         r"\b(?:hack|hacking|pentest)[- ](?:tools?|software|kit)",
+    ],
+    "resources": [
+        r"\bfree (hacking|hack|pentest|crack(ed)?|tool|malware|rat|spyware|keygen)",
+        r"\bcracked (software|tools?|apps?|windows|premium|accounts?)",
+        r"\bcrackz?\b", r"\bkeygen", r"\bfreecrazl?\b",
+        r"\bpremium (crack|key|keys|account|accounts)[s]?\b",
+        r"\bbased (tools?|software|apps?|cracks) (free|download)",
+        r"\bfree (tools?|software|resources?|dumps?|packs?)",
+        r"\bresource board\b", r"\bresource boards\b",
+        r"\btool (dump|dumps|pack|packs|arsenal)",
+        r"\bsoftware (dump|dumps|collection)",
+        r"\bscene (release|releases)",
+        r"\bfree (account|accounts) generator\b", r"\baccount generator\b",
+        r"\btelegram[ -](channel|channels|group) (free |with )?(cracks?|tools?|keys?|leaks?)",
+        r"\bwarez\b",
+
     ],
     "hacking": [
         r"\bhacker", r"\bhacking", r"\bexploit", r"\bzeroday\b",
@@ -242,6 +288,14 @@ KEYWORDS = {
         r"\bonion", r"\bdirectory", r"\bwiki\b", r"\blink list",
         r"\bindex\b", r"\bsearch", r"\brepository", r"\bonion dir",
         r"\bonions", r"\bsearch engine", r"\bwiki\b",
+    ],
+    "news": [
+        r"\bnews\b", r"\bbreaking\b", r"\bheadline", r"\bcoverage\b",
+        r"\bdispatch", r"\bnews[ -]?wire\b", r"\bwire[ -]service\b",
+        r"\bjournal\b", r"\bwebzine\b", r"\bnewsletter\b",
+        r"\b(network|market|darknet|onion) (status|alerts|updates|report)s?\b",
+        r"\blatest (news|updates|reports|briefings?)\b", r"\bdaily (brief|report|digest)",
+        r"\bpress[ -]release\b", r"\bsecurity[ -]bulletin\b",
     ],
     "other": [r"(?!)"],  # never matches; explicit fallback below
 }

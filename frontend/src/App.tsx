@@ -6,6 +6,8 @@ import Evidence from "@/pages/Evidence";
 import Wallets from "@/pages/Wallets";
 import Breaches from "@/pages/Breaches";
 import Cases from "@/pages/Cases";
+import Resources from "@/pages/Resources";
+import News from "@/pages/News";
 
 // One <Route> per page in src/pages; BrowserRouter already wraps this in main.tsx.
 export default function App() {
@@ -18,6 +20,8 @@ export default function App() {
       <Route path="/wallets" element={<Wallets />} />
       <Route path="/breaches" element={<Breaches />} />
       <Route path="/cases" element={<Cases />} />
+      <Route path="/resources" element={<Resources />} />
+      <Route path="/news" element={<News />} />
     </Routes>
   );
 }

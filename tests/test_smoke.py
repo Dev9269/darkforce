@@ -454,6 +454,10 @@ def test_normalize_category_maps_to_canonical():
     assert normalize_category("assassination") == "hitman"
     assert normalize_category("leak") == "leaked data"
     assert normalize_category("") == "other"
+    assert normalize_category("cracked tools") == "resources"
+    assert normalize_category("free tools") == "resources"
+    assert normalize_category("darknet news") == "news"
+    assert normalize_category("webzine") == "news"
     for c in CANONICAL:
         assert normalize_category(c) == c
 
@@ -471,6 +475,10 @@ def test_classify_site_uses_extended_taxonomy():
         "Hitman hire": "hitman",
         "clone card shop": "financial",
         "xanax bars": "drugs",
+        "free tool dumps for everyone": "resources",
+        "premium cracked software": "resources",
+        "daily breaking darknet news": "news",
+        "cyber threat daily brief": "news",
     }
     for title, expected in cases.items():
         assert classify_site(title=title) == expected, title
@@ -482,6 +490,43 @@ def test_sites_all_exposes_lang_and_normalized_category(sqlite_db):
     rows = sqlite_db.sites_all()
     row = [r for r in rows if r["url"] == "http://lang-test.onion"][0]
     assert row["lang"] == "EN"
+
+
+def test_resources_and_news_api(monkeypatch):
+    import darkforce.api as api
+    from fastapi.testclient import TestClient
+
+    db = SQLiteDB(_db_path())
+    monkeypatch.setattr(api, "db", db)
+    rid = db.upsert_site("http://freetools.onion", title="Free tools hub",
+                         category="resources")
+    cid = db.upsert_site("http://tools2.onion", title="Crackz vault",
+                         category="hacking tools")
+    nid = db.upsert_site("http://propub3r.onion", title="ProPublica mirror",
+                         category="news")
+    db.save_post("editor", rid, "http://freetools.onion/t", "Grab our free keygen pack",
+                 "metadata only index", "2026-02-01T00:00:00")
+    db.save_post("editor", nid, "http://propub3r.onion/a", "Leak exposes state secrets",
+                 "metadata only index", "2026-02-01T01:00:00")
+
+    client = TestClient(api.app)
+    res = client.get("/api/resources")
+    assert res.status_code == 200
+    rows = res.json()
+    urls = [r["url"] for r in rows]
+    assert set(urls) == {"http://tools2.onion", "http://freetools.onion"}
+    assert any(r["headline"] for r in rows)
+
+    res = client.get("/api/resources?category=hacking%20tools")
+    assert [r["url"] for r in res.json()] == ["http://tools2.onion"]
+
+    res = client.get("/api/news")
+    assert res.status_code == 200
+    items = res.json()
+    assert items and items[0]["title"] == "Leak exposes state secrets"
+    assert "http://propub3r.onion" in items[0]["site_url"]
+    assert items[0]["handle"] == "editor"
+    db.close()
 
 
 # ---------- postgres (only when DATABASE_URL is set) ----------
