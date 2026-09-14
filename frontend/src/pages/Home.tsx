@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import {
@@ -101,14 +101,17 @@ export default function Home() {
 
   const statsQuery = useQuery({ queryKey: ["stats"], queryFn: getStats, retry: false });
   const categoriesQuery = useQuery({ queryKey: ["categories"], queryFn: getCategories, retry: false });
-  const alertsQuery = useQuery({ queryKey: ["alerts"], queryFn: getAlerts, refetchInterval: 30_000, retry: false });
+  const alertsQuery = useQuery({ queryKey: ["alerts"], queryFn: getAlerts, retry: false });
   const categories = categoriesQuery.data?.categories ?? [];
   const liveAlertCount = alertsQuery.data?.length ?? 0;
-  const allActorsQuery = useQuery({ queryKey: ["actors-all"], queryFn: getActors, enabled: statView === "actors", retry: false });
+  const allActorsQuery = useQuery({ queryKey: ["actors-all"], queryFn: getActors, enabled: statView === "actors" || search.trim() === "", retry: false });
   const allIdentifiersQuery = useQuery({ queryKey: ["identifiers-all"], queryFn: getIdentifiers, enabled: statView === "identities", retry: false });
   const allSitesQuery = useQuery({ queryKey: ["sites-all"], queryFn: getSites, enabled: statView === "sites", retry: false });
-  const searchQuery = useQuery({ queryKey: ["search", search, kind], queryFn: () => getSearch(search, kind), retry: false });
-  const actorResults = useMemo(() => asArray(searchQuery.data), [searchQuery.data]);
+  const searchQuery = useQuery({ queryKey: ["search", search, kind], queryFn: () => getSearch(search, kind), enabled: search.trim() !== "", retry: false });
+  const actorResults = useMemo(() => {
+    if (search.trim() === "") return asArray(allActorsQuery.data);
+    return asArray(searchQuery.data);
+  }, [search, searchQuery.data, allActorsQuery.data]);
   const activeActor = selectedActor ?? actorResults[0];
   const actorQuery = useQuery({ queryKey: ["actor", activeActor?.id], queryFn: () => getActor(activeActor!.id), enabled: Boolean(activeActor?.id), retry: false });
   const profileActor = actorQuery.data ?? activeActor;
@@ -119,7 +122,9 @@ export default function Home() {
   const findingsQuery = useQuery({ queryKey: ["findings", activeFindingSite], queryFn: () => getFindings(activeFindingSite!), enabled: Boolean(activeFindingSite), retry: false });
   const styloHandle = profileActor?.canonical_handle ?? profileActor?.handle ?? profileActor?.canon;
   const styloQuery = useQuery({ queryKey: ["stylo", styloHandle], queryFn: () => getStylo(styloHandle!), enabled: Boolean(styloHandle), retry: false });
-  const timelineQuery = useQuery({ queryKey: ["timeline", timelineRange], queryFn: () => getTimeline(timelineRange.start, timelineRange.end), retry: false });
+  const timelineQuery = useQuery({ queryKey: ["timeline", timelineRange], queryFn: () => getTimeline(timelineRange.start, timelineRange.end), enabled: Boolean(timelineRange.start || timelineRange.end), retry: false });
+
+  const sseDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
     const source = new EventSource("/api/alerts/stream");
@@ -133,35 +138,50 @@ export default function Home() {
           const merged = [alert, ...current];
           return merged.slice(0, 20);
         });
-        toast.success(`Live alert: ${getText(alert.title, "Detector fired")}`);
+        if (sseDebounceRef.current) return;
+        sseDebounceRef.current = setTimeout(() => {
+          sseDebounceRef.current = null;
+        }, 2000);
         void queryClient.invalidateQueries({ queryKey: ["stats"] });
         void queryClient.invalidateQueries({ queryKey: ["alerts"] });
-        void queryClient.invalidateQueries({ queryKey: ["sites-all"] });
       } catch {
         return;
       }
     };
-    return () => source.close();
+    return () => {
+      source.close();
+      if (sseDebounceRef.current) clearTimeout(sseDebounceRef.current);
+      sseDebounceRef.current = null;
+    };
   }, [queryClient]);
 
-  const scanMutation = useMutation({ mutationFn: () => runScan(scanUrl), onSuccess: (response) => { toast.success(getText(response?.message, "Scan completed")); queryClient.invalidateQueries(); }, onError: (error) => toast.error(`Scan failed: ${errorText(error)}`) });
-  const collectMutation = useMutation({ mutationFn: runCollect, onSuccess: (response) => { toast.success(getText(response?.message, "Collection completed")); queryClient.invalidateQueries(); }, onError: (error) => toast.error(`Collection failed: ${errorText(error)}`) });
+  const refreshDashboard = useCallback(() => {
+    void queryClient.invalidateQueries({ queryKey: ["stats"] });
+    void queryClient.invalidateQueries({ queryKey: ["alerts"] });
+    void queryClient.invalidateQueries({ queryKey: ["categories"] });
+    void queryClient.invalidateQueries({ queryKey: ["misconfigs"] });
+    void queryClient.invalidateQueries({ queryKey: ["findings"] });
+    void queryClient.invalidateQueries({ queryKey: ["sites-all"] });
+  }, [queryClient]);
+
+  const scanMutation = useMutation({ mutationFn: () => runScan(scanUrl), onSuccess: (response) => { toast.success(getText(response?.message, "Scan completed")); refreshDashboard(); }, onError: (error) => toast.error(`Scan failed: ${errorText(error)}`) });
+  const collectMutation = useMutation({ mutationFn: runCollect, onSuccess: (response) => { toast.success(getText(response?.message, "Collection completed")); refreshDashboard(); }, onError: (error) => toast.error(`Collection failed: ${errorText(error)}`) });
   const filteredFindings = useMemo(() => { const all = [...misconfigs, ...asArray(findingsQuery.data)]; return severity === "all" ? all : all.filter((item) => item.severity?.toLowerCase() === severity); }, [findingsQuery.data, misconfigs, severity]);
   const stats = statsQuery.data;
   const sourceList = Array.isArray(stats?.sources) ? stats.sources : [];
   const topActors = actorResults.slice(0, 5);
-  const graphNodeSelected = (node: GraphNode) => {
+  const graphNodeSelected = useCallback((node: GraphNode) => {
     setSelectedGraphNode(node);
     const nodeActorId = node.actor_id ?? node.actorId;
     const isActor = (node.entity_type ?? node.type ?? node.kind)?.toLowerCase() === "actor";
     if (isActor && nodeActorId) { const match = actorResults.find((actor) => String(actor.id) === String(nodeActorId) || actor.id === node.id); setSelectedActor(match ?? { id: nodeActorId, handle: node.label, kind: "actor", confidence: node.confidence }); }
-  };
+  }, [actorResults]);
   const refresh = async () => {
     setRefreshing(true);
     try {
       const response = await runRefresh();
       toast.success(getText(response?.message, "Investigation data refreshed"));
-      void queryClient.invalidateQueries();
+      refreshDashboard();
     } catch (error) {
       toast.error(`Refresh failed: ${errorText(error)}`);
     } finally {

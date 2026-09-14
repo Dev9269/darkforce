@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { memo, useEffect, useMemo, useRef } from "react";
 import cytoscape, { type Core, type ElementDefinition } from "cytoscape";
 import type { GraphResponse, GraphNode } from "@/lib/darkforce";
 
@@ -36,10 +36,14 @@ function graphElements(graph?: GraphResponse): ElementDefinition[] {
   ];
 }
 
-export default function GraphCanvas({ graph, activeId, onNodeSelect }: GraphCanvasProps) {
+export default memo(function GraphCanvas({ graph, activeId, onNodeSelect }: GraphCanvasProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const cyRef = useRef<Core | null>(null);
   const selectedIdRef = useRef(activeId);
+  const onSelectRef = useRef(onNodeSelect);
+  onSelectRef.current = onNodeSelect;
+
+  const elements = useMemo(() => graphElements(graph), [graph]);
 
   useEffect(() => {
     selectedIdRef.current = activeId;
@@ -59,7 +63,7 @@ export default function GraphCanvas({ graph, activeId, onNodeSelect }: GraphCanv
     if (!containerRef.current) return;
     const cy = cytoscape({
       container: containerRef.current,
-      elements: graphElements(graph),
+      elements,
       minZoom: 0.35,
       maxZoom: 2.5,
       wheelSensitivity: 0.18,
@@ -83,7 +87,7 @@ export default function GraphCanvas({ graph, activeId, onNodeSelect }: GraphCanv
       const data = event.target.data() as GraphNode;
       cy.nodes().removeClass("selected");
       event.target.addClass("selected");
-      onNodeSelect(data);
+      onSelectRef.current(data);
     });
     if (selectedIdRef.current) {
       const selected = cy.getElementById(selectedIdRef.current);
@@ -93,7 +97,7 @@ export default function GraphCanvas({ graph, activeId, onNodeSelect }: GraphCanv
       cy.destroy();
       cyRef.current = null;
     };
-  }, [graph, onNodeSelect]);
+  }, [elements]);
 
   return <div id="cy" ref={containerRef} className="h-full min-h-[360px] w-full" data-testid="relationship-graph-canvas" />;
-}
+});

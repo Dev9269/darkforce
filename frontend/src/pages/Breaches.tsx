@@ -41,7 +41,8 @@ export default function Breaches() {
     mutationFn: () => importStealer(stealerText, stealerSource.trim() || "stealer_log"),
     onSuccess: (result) => {
       toast.success(`Stealer import: ${result.identifiers ?? 0} identifiers`);
-      void queryClient.invalidateQueries();
+      void queryClient.invalidateQueries({ queryKey: ["breaches"] });
+      void queryClient.invalidateQueries({ queryKey: ["pivots"] });
     },
     onError: (error) => toast.error(`Stealer import failed: ${errorText(error)}`),
   });
@@ -49,7 +50,8 @@ export default function Breaches() {
     mutationFn: importHibp,
     onSuccess: (result) => {
       toast.success(`HIBP import: ${result.imported ?? 0} breaches`);
-      void queryClient.invalidateQueries();
+      void queryClient.invalidateQueries({ queryKey: ["breaches"] });
+      void queryClient.invalidateQueries({ queryKey: ["pivots"] });
     },
     onError: (error) => toast.error(`HIBP import failed: ${errorText(error)}`),
   });

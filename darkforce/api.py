@@ -161,6 +161,8 @@ def stats():
 
 @app.get("/api/search")
 def search(q: str = "", kind: str = "all", category: str = ""):
+    if not (q or "").strip():
+        return []
     return db.search(q, kind, category=category or None)
 
 
@@ -469,6 +471,8 @@ def stylo_all():
 
 @app.get("/api/timeline")
 def timeline(start: str = "", end: str = ""):
+    if not (start or "").strip() and not (end or "").strip():
+        return []
     evs = [dict(r) for r in db.q("SELECT ts, handle, title, url, 'post' etype FROM posts"
                                  " WHERE (?='' OR ts>=?) AND (?='' OR ts<=?)", (start, start, end, end))]
     evs += [dict(r) for r in db.q("SELECT first_seen ts, detail title, url, 'finding' etype FROM findings"
