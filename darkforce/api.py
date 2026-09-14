@@ -6,7 +6,7 @@ from typing import Optional
 from fastapi import BackgroundTasks, Depends, FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, Response
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from . import auth, detect, link, net, seeds, stylo
 from .collect import crawl_and_ingest
@@ -84,8 +84,8 @@ class AttrReq(BaseModel):
 
 
 class StealerImportReq(BaseModel):
-    source: str = "stealer_log"
-    text: str = ""
+    source: str = Field(default="stealer_log", max_length=200)
+    text: str = Field(default="", max_length=2_000_000)
 
 
 class CaseCreateReq(BaseModel):

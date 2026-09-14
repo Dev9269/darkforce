@@ -652,6 +652,7 @@ class BaseDB:
         route to a cross-corpus persona."""
         addrs = {address}
         seen_handles, seen_actors = set(), set()
+        truncated = False
         for _ in range(depth):
             old = set(addrs)
             for a in list(addrs):
@@ -674,10 +675,16 @@ class BaseDB:
                         "SELECT DISTINCT value FROM identifiers WHERE (kind='btc' OR kind='xmr') "
                         "AND actor_id IN (" + ph + ")", tuple(seen_actors)):
                     addrs.add(r["value"])
+            # Harden the closure: stop expanding a runaway cluster so a single
+            # address can never fan out into an oversized IN(...) query.
+            if len(addrs) > 400 or len(seen_handles) + len(seen_actors) > 800:
+                truncated = True
+                break
             if addrs == old:
                 break
         return {"seed": address, "wallets": sorted(addrs),
-                "handles": sorted(seen_handles), "actors": sorted(seen_actors)}
+                "handles": sorted(seen_handles), "actors": sorted(seen_actors),
+                "truncated": truncated}
 
     def upsert_breach(self, name, type_, primary_entity="", source_url=""):
         self.exe(
@@ -788,6 +795,12 @@ class BaseDB:
                     break
             for w in wl:
                 if w["pattern"] and w["pattern"].lower() in low:
+                    dup = self.one(
+                        "SELECT COUNT(*) c FROM alerts WHERE kind='successor_suspected' "
+                        "AND COALESCE(url,'')=? AND created_at > ?",
+                        (row["url"], days_ago(1)))["c"]
+                    if dup:
+                        continue
                     self.exe(
                         "INSERT INTO alerts(kind,title,detail,url,confidence,created_at) "
                         "VALUES(?,?,?,?,?,?)",

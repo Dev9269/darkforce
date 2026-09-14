@@ -330,6 +330,20 @@ def test_successor_detection(sqlite_db):
     assert out["successor_alerts"] >= 1
     fresh = [a for a in sqlite_db.alerts() if a["id"] > base]
     assert any(a["kind"] == "successor_suspected" for a in fresh)
+    # hardening: repeated ops runs must not spam identical successor alerts
+    sqlite_db.detect_ops(days=14)
+    n = sqlite_db.one(
+        "SELECT COUNT(*) c FROM alerts WHERE kind='successor_suspected' AND url='http://successor.onion'")
+    assert n["c"] == 1
+
+
+def test_wallet_cluster_truncates_runaway(sqlite_db):
+    w = "bc1q" + "0" * 38
+    for i in range(801):
+        sqlite_db.add_identifier(None, f"operator{i}", "btc", w, "wallet", method="extract:btc")
+    cl = sqlite_db.wallet_cluster(w)
+    assert cl["truncated"] is True
+    assert len(cl["wallets"]) <= 401
 
 
 class _O:
