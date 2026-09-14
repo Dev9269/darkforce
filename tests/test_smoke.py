@@ -241,6 +241,15 @@ def test_provenance_link_and_attribute(sqlite_db):
     assert chain2["attribution"]
 
 
+def test_add_link_idempotent_no_bloat(sqlite_db):
+    n0 = sqlite_db.one("SELECT COUNT(*) c FROM links")["c"]
+    ev0 = sqlite_db.one("SELECT COUNT(*) c FROM link_evidence")["c"]
+    for _ in range(50):
+        sqlite_db.add_link("handle", "alice", "btc", "bc1q" + "0" * 38, "controls", 0.9, "shared post")
+    assert sqlite_db.one("SELECT COUNT(*) c FROM links")["c"] == n0 + 1
+    assert sqlite_db.one("SELECT COUNT(*) c FROM link_evidence")["c"] == ev0 + 1
+
+
 def test_source_trust_roundtrip(sqlite_db):
     sqlite_db.set_source_trust("test", 0.9, notes="verified mirror", analyst="alice")
     rows = sqlite_db.source_trusts()

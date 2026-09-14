@@ -105,6 +105,11 @@ CREATE TABLE IF NOT EXISTS case_members (
   label TEXT, note TEXT, tag TEXT, added_by TEXT, ts TEXT
 );
 CREATE INDEX IF NOT EXISTS ix_case_members_case ON case_members(case_id);
+DELETE FROM link_evidence WHERE link_id NOT IN (SELECT MIN(id) FROM links GROUP BY src_type, src_value, tgt_type, tgt_value, edge);
+DELETE FROM link_evidence WHERE id NOT IN (SELECT MIN(id) FROM link_evidence GROUP BY link_id, content_hash);
+DELETE FROM links WHERE id NOT IN (SELECT MIN(id) FROM links GROUP BY src_type, src_value, tgt_type, tgt_value, edge);
+CREATE UNIQUE INDEX IF NOT EXISTS ux_links ON links(src_type,src_value,tgt_type,tgt_value,edge);
+CREATE UNIQUE INDEX IF NOT EXISTS ux_link_evidence ON link_evidence(link_id,content_hash);
 """
 
 PG_EXTRA_SCHEMA = """
@@ -183,6 +188,11 @@ CREATE TABLE IF NOT EXISTS case_members (
   label TEXT, note TEXT, tag TEXT, added_by TEXT, ts TEXT
 );
 CREATE INDEX IF NOT EXISTS ix_case_members_case ON case_members(case_id);
+DELETE FROM link_evidence WHERE link_id NOT IN (SELECT MIN(id) FROM links GROUP BY src_type, src_value, tgt_type, tgt_value, edge);
+DELETE FROM link_evidence WHERE id NOT IN (SELECT MIN(id) FROM link_evidence GROUP BY link_id, content_hash);
+DELETE FROM links WHERE id NOT IN (SELECT MIN(id) FROM links GROUP BY src_type, src_value, tgt_type, tgt_value, edge);
+CREATE UNIQUE INDEX IF NOT EXISTS ux_links ON links(src_type,src_value,tgt_type,tgt_value,edge);
+CREATE UNIQUE INDEX IF NOT EXISTS ux_link_evidence ON link_evidence(link_id,content_hash);
 """
 
 
@@ -464,10 +474,21 @@ class BaseDB:
 
     def add_link(self, src_type, src_value, tgt_type, tgt_value, edge, confidence, evidence="", site_id=None,
                  source_id=None, content_hash=None):
+        """Record a typed link between two entities.
+
+        Idempotent per (src_type, src_value, tgt_type, tgt_value, edge): a
+        repeat call returns the existing link row without duplicating the
+        evidence row, so repeated merges / refreshes stay cheap and the links
+        tables cannot bloat."""
+        existing = self.one(
+            "SELECT id FROM links WHERE src_type=? AND src_value=? AND tgt_type=? AND tgt_value=? AND edge=?",
+            (src_type, src_value, tgt_type, tgt_value, edge))
+        if existing:
+            return existing["id"]
         if content_hash is None:
             content_hash = self.add_observation(f"link:{edge}", edge, (evidence or edge)[:500],
                                                 url="", site_id=site_id, source_id=source_id)
-        cur = self.exe(
+        self.exe(
             "INSERT INTO links(src_type,src_value,tgt_type,tgt_value,edge,confidence,evidence,site_id,"
             "source_id,content_hash) VALUES(?,?,?,?,?,?,?,?,?,?) ON CONFLICT DO NOTHING",
             (src_type, src_value, tgt_type, tgt_value, edge, confidence, evidence, site_id,
@@ -477,10 +498,11 @@ class BaseDB:
             "SELECT id FROM links WHERE src_type=? AND src_value=? AND tgt_type=? AND tgt_value=? AND edge=?",
             (src_type, src_value, tgt_type, tgt_value, edge))["id"]
         self.exe(
-            "INSERT INTO link_evidence(link_id,evidence,content_hash,source_id,ts) VALUES(?,?,?,?,?)",
+            "INSERT INTO link_evidence(link_id,evidence,content_hash,source_id,ts) VALUES(?,?,?,?,?) "
+            "ON CONFLICT DO NOTHING",
             (link_id, (evidence or "")[:500], content_hash, source_id, utcnow()),
         )
-        return cur
+        return link_id
 
     # ---------- evidence provenance ledger ----------
     def add_observation(self, method, kind, raw, url="", site_id=None, source_id=None, collector_version=""):
@@ -1122,18 +1144,25 @@ class BaseDB:
 
     def sites_all(self):
         """Every site with its post count and a body-text digest for purpose
-        classification. `digest` is truncated; enough for keyword tagging."""
+        classification. `digest` is truncated; enough for keyword tagging.
+
+        Digests are built from ONE bulk query (newest 8 bodies per site)
+        instead of one query per site, which was an N+1 that made the
+        sites / categories endpoints crawl at ~2s with large corpora."""
         rows = [dict(r) for r in self.q(
             "SELECT s.id, s.url, s.title, s.category, s.server, s.status, s.first_seen, s.last_scan, s.lang, "
             "       COUNT(p.id) AS post_count "
             "FROM sites s LEFT JOIN posts p ON p.site_id = s.id "
             "GROUP BY s.id ORDER BY s.last_scan DESC, s.id DESC")]
+        digests = {}
+        for r in self.q("SELECT site_id, body FROM posts ORDER BY site_id, id DESC"):
+            sid, body = r["site_id"], (r["body"] or "")
+            if sid not in digests:
+                digests[sid] = []
+            if len(digests[sid]) < 8:
+                digests[sid].append(body)
         for r in rows:
-            r["digest"] = ""
-            texts = [dict(x) for x in self.q(
-                "SELECT body FROM posts WHERE site_id = ? ORDER BY id DESC LIMIT 8", (r["id"],))]
-            if texts:
-                r["digest"] = " ".join((t["body"] or "") for t in texts)[:4000]
+            r["digest"] = " ".join(digests.get(r["id"], []))[:4000]
         return rows
 
     # ---------- RBAC: users + audit log ----------

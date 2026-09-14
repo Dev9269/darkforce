@@ -17,6 +17,7 @@ _IDENTIFIER_KINDS = {"btc", "xmr", "email", "jabber", "onion", "pgp",
 
 def _build_graph(db: DB) -> "nx.Graph":
     G = nx.Graph()
+    actor_by_id = {r["id"]: r["canon"] for r in db.q("SELECT id, canon FROM actors")}
 
     for a in db.q("SELECT * FROM actors ORDER BY confidence DESC"):
         conf = a["confidence"]
@@ -43,9 +44,9 @@ def _build_graph(db: DB) -> "nx.Graph":
         node = f"{kind}:{i['value'][:18]}"
         if not G.has_node(node):
             G.add_node(node, label=i["value"][:40], kind=i["kind"], confidence=None)
-        a = db.one("SELECT canon FROM actors WHERE id=?", (i["actor_id"],))
-        if a and G.has_node(f"actor:{a['canon']}"):
-            G.add_edge(f"actor:{a['canon']}", node, weight=0.95, edge_type=f"uses_{i['kind']}")
+        canon = actor_by_id.get(i["actor_id"])
+        if canon and G.has_node(f"actor:{canon}"):
+            G.add_edge(f"actor:{canon}", node, weight=0.95, edge_type=f"uses_{i['kind']}")
 
     # Cross-actor: sharing an identifier value is the strongest attribution bridge.
     for i in db.q("SELECT value FROM identifiers "
@@ -54,11 +55,10 @@ def _build_graph(db: DB) -> "nx.Graph":
         ids = [r["actor_id"] for r in rows]
         for x in range(len(ids)):
             for y in range(x + 1, len(ids)):
-                ax = db.one("SELECT canon FROM actors WHERE id=?", (ids[x],))
-                ay = db.one("SELECT canon FROM actors WHERE id=?", (ids[y],))
+                ax, ay = actor_by_id.get(ids[x]), actor_by_id.get(ids[y])
                 if ax and ay:
-                    nx_node_a = f"actor:{ax['canon']}"
-                    nx_node_b = f"actor:{ay['canon']}"
+                    nx_node_a = f"actor:{ax}"
+                    nx_node_b = f"actor:{ay}"
                     if G.has_node(nx_node_a) and G.has_node(nx_node_b):
                         G.add_edge(nx_node_a, nx_node_b, weight=1.0, edge_type="shared_identifier")
     return G
@@ -74,11 +74,21 @@ def analyze_network(db: DB) -> dict:
 
     n_nodes, n_edges = G.number_of_nodes(), G.number_of_edges()
 
+    # actor-only induced subgraph: fast centrality + the bridge signal analysts
+    # actually read (an actor is central when it connects other ACTORS, not
+    # sites/handles). Full-graph betweenness cost O(V*E) (~20s here).
+    actor_nodes = [n for n in G.nodes if G.nodes[n].get("kind") == "actor"]
+    S = G.subgraph(actor_nodes) if len(actor_nodes) > 1 else G
+
     # ── communities ─────────────────────────────────────────────────────────
     try:
-        raw_comms = list(nx.community.greedy_modularity_communities(G, weight="weight"))
+        import networkx.algorithms.community as _comm
+        raw_comms = list(_comm.louvain_communities(G, weight="weight", seed=7))
     except Exception:
-        raw_comms = [frozenset(G.nodes)]
+        try:
+            raw_comms = list(nx.community.greedy_modularity_communities(G, weight="weight"))
+        except Exception:
+            raw_comms = [frozenset(G.nodes)]
 
     communities, node_comm = [], {}
     for idx, comm in enumerate(raw_comms):
@@ -94,15 +104,15 @@ def analyze_network(db: DB) -> dict:
 
     # ── centrality ──────────────────────────────────────────────────────────
     try:
-        degree = nx.degree_centrality(G)
+        degree = nx.degree_centrality(S)
     except Exception:
         degree = {n: 0.0 for n in G}
     try:
-        betweenness = nx.betweenness_centrality(G, weight="weight")
+        betweenness = nx.betweenness_centrality(S, weight="weight")
     except Exception:
         betweenness = {n: 0.0 for n in G}
     try:
-        eigen = nx.eigenvector_centrality(G, max_iter=1000, weight="weight")
+        eigen = nx.eigenvector_centrality(S, max_iter=1000, weight="weight")
     except Exception:
         eigen = {n: 0.0 for n in G}
 
@@ -125,21 +135,35 @@ def analyze_network(db: DB) -> dict:
 
     # ── bridges ─────────────────────────────────────────────────────────────
     bridges = []
-    for n in G.nodes:
-        neighbor_communities = {node_comm.get(m, 0) for m in G.neighbors(n)}
+    for n in actor_nodes:
+        neighbor_communities = {node_comm.get(m, 0) for m in S.neighbors(n)}
         if len(neighbor_communities) > 1:
             bridges.append({
                 "node": n,
                 "label": G.nodes[n].get("label", n),
-                "kind": G.nodes[n].get("kind", "entity"),
+                "kind": "actor",
                 "actor_id": G.nodes[n].get("_actor_id"),
                 "connects_communities": len(neighbor_communities),
                 "communities": sorted(neighbor_communities),
             })
+    if S is not G:
+        for n in G.nodes:
+            if n not in actor_nodes and G.nodes[n].get("kind") != "actor":
+                neighbor_communities = {node_comm.get(m, 0) for m in G.neighbors(n)}
+                if len(neighbor_communities) > 1:
+                    bridges.append({
+                        "node": n,
+                        "label": G.nodes[n].get("label", n),
+                        "kind": G.nodes[n].get("kind", "entity"),
+                        "actor_id": G.nodes[n].get("_actor_id"),
+                        "connects_communities": len(neighbor_communities),
+                        "communities": sorted(neighbor_communities),
+                    })
     bridges.sort(key=lambda b: -b["connects_communities"])
 
     density = nx.density(G)
-    avg_degree = (sum(degree.values()) / n_nodes) if n_nodes else 0.0
+    full_deg = dict(G.degree())
+    avg_degree = (sum(full_deg.values()) / n_nodes) if n_nodes else 0.0
     most_central = actor_centrality[0]["label"] if actor_centrality else None
 
     return {

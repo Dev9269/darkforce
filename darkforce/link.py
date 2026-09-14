@@ -33,6 +33,16 @@ def rebuild_actors(db, stylo_pairs=None, stylo_threshold=0.7, dry=False):
     """Merge handles sharing identifiers / content / style into one actor each."""
     uf = UnionFind()
 
+    # existing link keys, so repeated merges don't re-insert the same edges
+    existing_links = {(r["src_type"], r["src_value"], r["tgt_type"], r["tgt_value"], r["edge"])
+                      for r in db.q("SELECT src_type, src_value, tgt_type, tgt_value, edge FROM links")}
+
+    def link_once(src, tgt, edge, conf, evidence):
+        key = ("handle", src, "handle", tgt, edge)
+        if key not in existing_links:
+            existing_links.add(key)
+            db.add_link(*key, conf, evidence)
+
     ident_rows = db.q("SELECT kind, value, handle, detail, actor_id FROM identifiers")
     by_value = defaultdict(list)
     for r in ident_rows:
@@ -43,8 +53,8 @@ def rebuild_actors(db, stylo_pairs=None, stylo_threshold=0.7, dry=False):
                 uf.union(handles[0], h)
             ev = next((r["detail"] for r in ident_rows if r["kind"] == kind and r["value"] == value), "")
             for h in handles[1:]:
-                db.add_link("handle", handles[0], "handle", h, f"shares_{kind}",
-                            KIND_W.get(kind, 0.5), f"Common {kind} {value[:20]}" + (f" ({ev})" if ev else ""))
+                link_once(handles[0], h, f"shares_{kind}", KIND_W.get(kind, 0.5),
+                          f"Common {kind} {value[:20]}" + (f" ({ev})" if ev else ""))
 
     # identical content reused across handles (stolen boilerplate/listing reuse)
     posts = db.q("SELECT handle, content_hash FROM posts WHERE content_hash IS NOT NULL")
@@ -57,16 +67,14 @@ def rebuild_actors(db, stylo_pairs=None, stylo_threshold=0.7, dry=False):
             for h in hs[1:]:
                 uf.union(hs[0], h)
             for h in hs[1:]:
-                db.add_link("handle", hs[0], "handle", h, "same_content", 0.7,
-                            "Identical content/paste reused")
+                link_once(hs[0], h, "same_content", 0.7, "Identical content/paste reused")
 
     # stylometry linkage
     for (a, b, score) in (stylo_pairs or []):
         if score >= stylo_threshold:
             uf.union(a, b)
             w = 0.6 + 0.3 * (score - stylo_threshold) / (1 - stylo_threshold + 1e-9)
-            db.add_link("handle", a, "handle", b, "stylo_match", min(w, 0.9),
-                        f"Stylometric similarity {score:.0%}")
+            link_once(a, b, "stylo_match", min(w, 0.9), f"Stylometric similarity {score:.0%}")
 
     handles_all = db.q("SELECT id, actor_id, handle FROM handles")
     handle_actors = {}

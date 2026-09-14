@@ -448,8 +448,8 @@ def categories_ref():
 
     from darkforce.categories import normalize_category, CANONICAL
     counts = collections.Counter()
-    for r in db.sites_all():
-        counts[normalize_category(r.get("category") or "other")] += 1
+    for r in db.q("SELECT category, COUNT(*) c FROM sites GROUP BY category"):
+        counts[normalize_category(r["category"] or "other")] += r["c"]
     return {
         "categories": CANONICAL,
         "counts": {c: counts[c] for c in CANONICAL},
