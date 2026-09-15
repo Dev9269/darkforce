@@ -25,7 +25,7 @@ function TrustEditor({ row }: { row: TrustRow }) {
     onError: (error) => toast.error(`Trust update failed: ${errorText(error)}`),
   });
   return (
-    <div className="source-item" style={{ display: "grid", gap: "0.5rem" }}>
+    <div className="source-item trust-editor" style={{ display: "grid", gap: "0.5rem", gridTemplateColumns: "1fr" }}>
       <div style={{ display: "flex", gap: "0.6rem", alignItems: "center" }}>
         <span className="source-index mono">{getText(row.source_type ?? "src")}</span>
         <span>{getText(row.source_name ?? row.source)}</span>
