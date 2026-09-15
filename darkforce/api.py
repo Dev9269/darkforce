@@ -459,7 +459,7 @@ def categories_ref():
     }
 
 
-RESOURCE_CATEGORIES = ("resources", "hacking tools", "malware", "leaked data")
+RESOURCE_CATEGORIES = ("free", "resources", "hacking tools", "malware", "leaked data")
 
 
 @app.get("/api/resources")

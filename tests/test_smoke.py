@@ -454,8 +454,12 @@ def test_normalize_category_maps_to_canonical():
     assert normalize_category("assassination") == "hitman"
     assert normalize_category("leak") == "leaked data"
     assert normalize_category("") == "other"
-    assert normalize_category("cracked tools") == "resources"
-    assert normalize_category("free tools") == "resources"
+    assert normalize_category("free tools") == "free"
+    assert normalize_category("free tool") == "free"
+    assert normalize_category("free resources") == "free"
+    assert normalize_category("free resource") == "free"
+    assert normalize_category("free downloads") == "free"
+    assert normalize_category("freebies") == "free"
     assert normalize_category("darknet news") == "news"
     assert normalize_category("webzine") == "news"
     for c in CANONICAL:
@@ -475,7 +479,9 @@ def test_classify_site_uses_extended_taxonomy():
         "Hitman hire": "hitman",
         "clone card shop": "financial",
         "xanax bars": "drugs",
-        "free tool dumps for everyone": "resources",
+        "free tool dumps for everyone": "free",
+        "free downloads for everyone": "free",
+        "crackz vault store": "resources",
         "premium cracked software": "resources",
         "daily breaking darknet news": "news",
         "cyber threat daily brief": "news",

@@ -4,7 +4,7 @@ import { ArrowLeft, Copy, LayoutGrid, Link as LinkIcon, LoaderCircle, PackageSea
 import { Link } from "react-router-dom";
 import { getResources, getText, type ResourceSite } from "@/lib/darkforce";
 
-const RESOURCE_CATS = ["resources", "hacking tools", "malware", "leaked data"];
+const RESOURCE_CATS = ["free", "resources", "hacking tools", "malware", "leaked data"];
 
 function statusLabel(status?: string): string {
   const s = (status ?? "").toLowerCase();
