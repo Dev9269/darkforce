@@ -84,7 +84,11 @@ def start_managed():
     if managed_running():
         _last_proxy = f"socks5h://{MANAGED_HOST}:{MANAGED_PORT}"
         return _last_proxy
-    _spawn()
+    try:
+        _spawn()
+    except (OSError, RuntimeError) as e:
+        print(f"WARNING: bundled Tor not started ({e})")
+        return None
     deadline = time.time() + BOOTSTRAP_TIMEOUT
     while time.time() < deadline:
         if _bootstrap_ok():
