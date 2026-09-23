@@ -1,20 +1,33 @@
+import { lazy, Suspense } from "react";
 import { Routes, Route } from "react-router-dom";
 
-// One <Route> per page in src/pages; BrowserRouter already wraps this in main.tsx.
-// Route.lazy code-splits each page: the shared chunk stays in the entry bundle
-// and every page loads only when first navigated to.
+// React.lazy + Suspense keep each page in its own chunk (code-split) and load
+// it on first navigation, unlike <Route lazy> which silently renders nothing
+// with this router version.
+const Home = lazy(() => import("@/pages/Home"));
+const Registry = lazy(() => import("@/pages/Registry"));
+const Analyst = lazy(() => import("@/pages/Analyst"));
+const Evidence = lazy(() => import("@/pages/Evidence"));
+const Wallets = lazy(() => import("@/pages/Wallets"));
+const Breaches = lazy(() => import("@/pages/Breaches"));
+const Cases = lazy(() => import("@/pages/Cases"));
+const Resources = lazy(() => import("@/pages/Resources"));
+const News = lazy(() => import("@/pages/News"));
+
 export default function App() {
   return (
-    <Routes>
-      <Route path="/" lazy={() => import("@/pages/Home")} />
-      <Route path="/registry" lazy={() => import("@/pages/Registry")} />
-      <Route path="/analyst" lazy={() => import("@/pages/Analyst")} />
-      <Route path="/evidence" lazy={() => import("@/pages/Evidence")} />
-      <Route path="/wallets" lazy={() => import("@/pages/Wallets")} />
-      <Route path="/breaches" lazy={() => import("@/pages/Breaches")} />
-      <Route path="/cases" lazy={() => import("@/pages/Cases")} />
-      <Route path="/resources" lazy={() => import("@/pages/Resources")} />
-      <Route path="/news" lazy={() => import("@/pages/News")} />
-    </Routes>
+    <Suspense fallback={<div className="min-h-screen bg-background" />}>
+      <Routes>
+        <Route path="/" element={<Home />} />
+        <Route path="/registry" element={<Registry />} />
+        <Route path="/analyst" element={<Analyst />} />
+        <Route path="/evidence" element={<Evidence />} />
+        <Route path="/wallets" element={<Wallets />} />
+        <Route path="/breaches" element={<Breaches />} />
+        <Route path="/cases" element={<Cases />} />
+        <Route path="/resources" element={<Resources />} />
+        <Route path="/news" element={<News />} />
+      </Routes>
+    </Suspense>
   );
 }
