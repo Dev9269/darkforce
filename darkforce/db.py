@@ -243,6 +243,14 @@ CREATE INDEX IF NOT EXISTS ix_ident_value ON identifiers(value);
 CREATE UNIQUE INDEX IF NOT EXISTS ux_ident ON identifiers(handle, kind, value);
 CREATE INDEX IF NOT EXISTS ix_handles_h ON handles(handle);
 CREATE INDEX IF NOT EXISTS ix_posts_h ON posts(handle);
+CREATE TABLE IF NOT EXISTS clearnet_fingerprints (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  host TEXT UNIQUE, title TEXT DEFAULT '',
+  favicon_hash TEXT, content_hash TEXT, server TEXT DEFAULT '',
+  analytics_id TEXT DEFAULT '', last_seen TEXT
+);
+CREATE INDEX IF NOT EXISTS ix_clearnet_fp_favicon ON clearnet_fingerprints(favicon_hash);
+CREATE INDEX IF NOT EXISTS ix_clearnet_fp_content ON clearnet_fingerprints(content_hash);
 """ + _EXTRA_SCHEMA
 
 PG_SCHEMA = """
@@ -292,6 +300,14 @@ CREATE INDEX IF NOT EXISTS ix_ident_value ON identifiers(value);
 CREATE UNIQUE INDEX IF NOT EXISTS ux_ident ON identifiers(handle, kind, value);
 CREATE INDEX IF NOT EXISTS ix_handles_h ON handles(handle);
 CREATE INDEX IF NOT EXISTS ix_posts_h ON posts(handle);
+CREATE TABLE IF NOT EXISTS clearnet_fingerprints (
+  id BIGSERIAL PRIMARY KEY,
+  host TEXT UNIQUE, title TEXT DEFAULT '',
+  favicon_hash TEXT, content_hash TEXT, server TEXT DEFAULT '',
+  analytics_id TEXT DEFAULT '', last_seen TEXT
+);
+CREATE INDEX IF NOT EXISTS ix_clearnet_fp_favicon ON clearnet_fingerprints(favicon_hash);
+CREATE INDEX IF NOT EXISTS ix_clearnet_fp_content ON clearnet_fingerprints(content_hash);
 """ + PG_EXTRA_SCHEMA
 
 try:
@@ -356,6 +372,29 @@ class BaseDB:
     def site_content_hash(self, url):
         r = self.one("SELECT content_hash FROM sites WHERE url=?", (url,))
         return (r["content_hash"] if r else None)
+
+    def sites_by_cert_san(self, domain):
+        """Rows whose cert SANs mention a clearnet domain (correlator search)."""
+        return self.q(
+            "SELECT id,url,cert_sans FROM sites WHERE cert_sans LIKE ?",
+            (f"%{domain}%",))
+
+    def upsert_clearnet_fp(self, host, title="", favicon_hash=None, content_hash=None,
+                           server="", analytics_id=""):
+        self.exe(
+            "INSERT INTO clearnet_fingerprints(host,title,favicon_hash,content_hash,"
+            "server,analytics_id,last_seen) VALUES(?,?,?,?,?,?,?) "
+            "ON CONFLICT(host) DO UPDATE SET title=excluded.title, "
+            "favicon_hash=excluded.favicon_hash, content_hash=excluded.content_hash, "
+            "server=excluded.server, analytics_id=excluded.analytics_id, "
+            "last_seen=excluded.last_seen",
+            (host, title, favicon_hash, content_hash, server, analytics_id, utcnow()),
+        )
+
+    def load_clearnet_index(self):
+        return self.q(
+            "SELECT host,title,favicon_hash,content_hash,server,analytics_id "
+            "FROM clearnet_fingerprints")
 
     def site_last_scan(self, url):
         r = self.one("SELECT last_scan FROM sites WHERE url=?", (url,))
@@ -930,7 +969,14 @@ class BaseDB:
             return res
         if kind in ("all", "actor"):
             res["actors"] = [dict(r) for r in self.q(
-                "SELECT * FROM actors WHERE lower(canon) LIKE ?", (f"%{q}%",))]
+                "SELECT a.*, "
+                "       (SELECT COUNT(*) FROM handles h WHERE h.actor_id=a.id) n_handles, "
+                "       (SELECT COUNT(*) FROM posts p JOIN handles h ON h.handle=p.handle AND h.actor_id=a.id) n_posts "
+                "FROM actors a "
+                "WHERE lower(a.canon) LIKE ? "
+                "   OR a.id IN (SELECT actor_id FROM handles WHERE lower(handle) LIKE ?) "
+                "   OR a.id IN (SELECT actor_id FROM identifiers WHERE lower(value) LIKE ?) "
+                "ORDER BY a.confidence DESC, a.id DESC", (f"%{q}%", f"%{q}%", f"%{q}%"))]
         if kind in ("all", "id", "identifier"):
             res["identifiers"] = [dict(r) for r in self.q(
                 "SELECT * FROM identifiers WHERE lower(kind||' '||value||' '||COALESCE(detail,'')) LIKE ?",
@@ -1228,6 +1274,9 @@ class BaseDB:
                     pass  # cleared next boot if the ALTER truly never landed
 
         ensure("sites", "lang", "TEXT")
+        ensure("sites", "cert_sans", "TEXT")
+        ensure("sites", "tls_issuer", "TEXT")
+        ensure("sites", "cert_fp", "TEXT")
         ensure("identifiers", "source_id", "INTEGER")
         ensure("identifiers", "content_hash", "TEXT")
         ensure("identifiers", "method", "TEXT")

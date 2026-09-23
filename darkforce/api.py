@@ -8,7 +8,7 @@ from fastapi.responses import FileResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from . import auth, detect, link, net, seeds, stylo
+from . import auth, clearnet_index, detect, link, net, seeds, stylo
 from .collect import crawl_and_ingest
 from .config import ADMIN_PASSWORD, ADMIN_USER, tor_available
 from .db import DB
@@ -570,14 +570,49 @@ def  scan(req: ScanReq, who: dict = Depends(auth.require_role("analyst"))):
     fp = detect.fingerprint(snap)
     sid = db.upsert_site(req.url, title=req.url, server=fp["server"],
                          favicon_hash=fp["favicon_hash"], content_hash=fp["content_hash"],
-                         category="scanned", status=str(getattr(snap, "status", "?")))
+                         category="scanned", status=str(getattr(snap, "status", "?")),
+                         cert_sans=fp["cert_sans"] or None,
+                         tls_issuer=fp["tls_issuer"] or None,
+                         cert_fp=fp["cert_fp"] or None)
     det = {k: v for k, v in detect.fingerprint(snap).items() if v}
-    findings, fp2 = detect.scan(snap)
+    findings, fp2 = detect.scan(snap, clearnet_index.load(db))
     src = db.one("SELECT source_id FROM sites WHERE id=?", (sid,))
     source_id = src["source_id"] if src else None
     rows = detect.pipeline_findings(sid, db, findings, fp2, url=req.url,
                                     source_id=source_id, method="detect:scan")
     return {"site_id": sid, "fingerprint": {k: v for k, v in fp.items() if v}, "findings": rows}
+
+
+@app.get("/api/infra/correlations")
+def infra_correlations(limit: int = 200, who: dict = Depends(auth.require_role("analyst"))):
+    """Per onion site, the clearnet hosts whose stored fingerprints it matches."""
+    rows = db.q(
+        "SELECT id,url,favicon_hash,content_hash,server FROM sites "
+        "WHERE url LIKE '%.onion%' "
+        "AND (favicon_hash IS NOT NULL OR content_hash IS NOT NULL "
+        "     OR (server IS NOT NULL AND server <> '')) "
+        "ORDER BY last_scan DESC LIMIT ?",
+        (limit,))
+    idx = clearnet_index.load(db)
+    correlations = []
+    for row in rows:
+        r = dict(row)
+        fp = {"favicon_hash": r.get("favicon_hash"),
+              "content_hash": r.get("content_hash"),
+              "server": r.get("server") or ""}
+        matches = idx.lookup(fp)
+        if not matches:
+            continue
+        correlations.append({
+            "onion_url": r["url"],
+            "site_id": r["id"],
+            "candidates": [
+                {"host": m["host"], "title": m["title"],
+                 "attribute": m["attribute"], "confidence": m["confidence"]}
+                for m in matches
+            ],
+        })
+    return {"correlations": correlations}
 
 
 def _collect_job(job_id, source, want_tor):

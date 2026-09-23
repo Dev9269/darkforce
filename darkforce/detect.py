@@ -13,6 +13,15 @@ UA_ANALYTICS = re.compile(r"\b(UA-\d{4,10}-\d|G-[A-Z0-9]{10,14})\b")
 
 SEVERITY_WEIGHT = {"critical": 1.0, "high": 0.8, "medium": 0.5, "low": 0.2}
 
+_MATCH_LABELS = {
+    "favicon_match": "Favicon hash matches clearnet host",
+    "mirror_match": "Same page content as clearnet host",
+    "analytics_match": "Analytics ID shared with clearnet host",
+    "banner_match": "Server banner identical to clearnet host",
+}
+_MATCH_SEVERITY = {"favicon_match": "critical", "mirror_match": "critical",
+                   "analytics_match": "high", "banner_match": "high"}
+
 
 class Snap:
     def __init__(self, url="", headers=None, html="", favicon=None, meta=None):
@@ -27,6 +36,19 @@ def _hash(b):
     return hashlib.sha1(b).hexdigest() if b else None
 
 
+def _clearnet_names(*values):
+    """Names from CN/SAN values that look like public clearnet domains
+    (non-onion, dotted, not loopback) - correlators worth flagging."""
+    out = []
+    for raw in values:
+        for name in re.split(r"[,\s]+", raw or ""):
+            name = name.strip().lower().rstrip(".")
+            if name and "." in name and not name.endswith(".onion") \
+                    and name not in ("localhost", "127.0.0.1"):
+                out.append(name)
+    return sorted(set(out))
+
+
 def fingerprint(snap):
     """Stable identifiers that allow cross-site correlation."""
     h = _hash(snap.favicon)
@@ -39,6 +61,11 @@ def fingerprint(snap):
         "via": (snap.headers.get("Via") or snap.headers.get("X-Forwarded-For") or "").strip(),
         "host": snap.meta.get("hostname", ""),
         "tls_cn": snap.meta.get("tls_cn", ""),
+        "cert_sans": snap.meta.get("cert_sans", ""),
+        "tls_issuer": snap.meta.get("tls_issuer", ""),
+        "cert_fp": snap.meta.get("cert_fp", ""),
+        "tls_protocol": snap.meta.get("tls_protocol", ""),
+        "tls_cipher": snap.meta.get("tls_cipher", ""),
         "ssh_fp": snap.meta.get("ssh_fp", ""),
     }
 
@@ -56,8 +83,10 @@ def scan(snap, clearnet_index=None):
         out.append(("server_banner", "medium", f"Framework leak: X-Powered-By: {fp['powered']}", 0.6))
     if fp["via"]:
         out.append(("proxy_leak", "high", f"Proxy/Via header echoes backend: {fp['via']}", 0.85))
-    if fp["tls_cn"]:
-        out.append(("tls_cert", "high", f"TLS cert CN names clearnet domain: {fp['tls_cn']}", 0.8))
+    cert_names = _clearnet_names(fp["tls_cn"], fp["cert_sans"])
+    if cert_names:
+        out.append(("tls_cert", "high",
+                    f"TLS cert names clearnet domain(s): {', '.join(cert_names)}", 0.8))
     if fp["ssh_fp"]:
         out.append(("ssh_key", "high", f"SSH host key fingerprint exposed (correlatable): {fp['ssh_fp']}", 0.85))
 
@@ -89,16 +118,28 @@ def scan(snap, clearnet_index=None):
         out.append(("analytics_id", "medium", "Analytics / tracker IDs (correlator): " + ", ".join(analytics), 0.65))
 
     if clearnet_index:
-        if fp["favicon_hash"] and fp["favicon_hash"] in clearnet_index:
-            out.append(("favicon_match", "critical",
-                        f"Favicon hash matches clearnet host: {clearnet_index[fp['favicon_hash']]}", 0.9))
-        if fp["content_hash"] and fp["content_hash"] in clearnet_index:
-            out.append(("mirror_match", "critical",
-                        f"Same page content as clearnet host: {clearnet_index[fp['content_hash']]}", 0.9))
-        if fp["server"] and fp["server"] in [v.get("server") for v in clearnet_index.values() if isinstance(v, dict)]:
-            out.append(("banner_match", "high", "Server banner identical to a clearnet host", 0.75))
+        for m in _clearnet_matches(fp, analytics, clearnet_index):
+            label = _MATCH_LABELS.get(m["kind"], "Fingerprint matches clearnet host")
+            out.append((m["kind"], _MATCH_SEVERITY.get(m["kind"], "high"),
+                        f"{label}: {m['host']}", m["confidence"]))
 
     return out, fp
+
+
+def _clearnet_matches(fp, analytics, clearnet_index):
+    """Resolve clearnet correlation matches from either a ClearnetIndex object
+    or a legacy {value: host-label} dict. Each match keeps the shape:
+        {kind, host, title, attribute, value, confidence}
+    """
+    if hasattr(clearnet_index, "lookup"):
+        return clearnet_index.lookup(fp, analytics)
+    out = []
+    for field, kind in (("favicon_hash", "favicon_match"), ("content_hash", "mirror_match")):
+        value = fp.get(field)
+        if value and value in clearnet_index:
+            out.append({"kind": kind, "host": clearnet_index[value], "title": "",
+                        "attribute": field, "value": value, "confidence": 0.9})
+    return out
 
 
 def severity_rank(s):

@@ -46,8 +46,8 @@ def main():
                        "financial/carding", "privacy/hosting", "counterfeit",
                        "weapons", "directories"):
                 fixed += 1
-            print(f"  {r['id']}: {old} -> {new}  ({title[:60] or r['url'][:60]})")
-    print(f"\nAdjusted {changed} of {len(rows)} sites ({fixed} legacy corrections).")
+            _print(f"  {r['id']}: {old} -> {new}  ({title[:60] or r['url'][:60]})")
+    _print(f"\nAdjusted {changed} of {len(rows)} sites ({fixed} legacy corrections).")
     db.close()
     return 0
 

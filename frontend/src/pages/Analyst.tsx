@@ -1,9 +1,10 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { AlertTriangle, BarChart3, CloudDownload, FileJson, FileText, GitFork, Link2, Network, ShieldAlert, Users } from "lucide-react";
+import { AlertTriangle, BarChart3, CloudDownload, FileJson, FileText, GitFork, Link2, Maximize2, Minimize2, Network, RotateCcw, ShieldAlert, Tags, Users, ZoomIn, ZoomOut } from "lucide-react";
 import { Link } from "react-router-dom";
 import { Button } from "@/components/ui/button";
-import GraphCanvas from "@/components/GraphCanvas";
+import GraphCanvas, { type GraphApi } from "@/components/GraphCanvas";
+import { CountUp } from "@/components/CountUp";
 import { apiDownload } from "@/lib/api";
 import { getActors, getGraph, getNetworkAnalysis, getText, type GraphNode } from "@/lib/darkforce";
 
@@ -14,7 +15,7 @@ function metric(value?: number, label = "RECORDS") {
         <BarChart3 size={16} />
       </div>
       <div>
-        <div className="stat-value">{(value ?? 0).toLocaleString()}</div>
+        <div className="stat-value"><CountUp value={value ?? 0} /></div>
         <div className="stat-label">{label}</div>
       </div>
     </div>
@@ -23,6 +24,9 @@ function metric(value?: number, label = "RECORDS") {
 
 export default function Analyst() {
   const [selectedNode, setSelectedNode] = useState<GraphNode | null>(null);
+  const [isFullscreen, setIsFullscreen] = useState(false);
+  const [showLabels, setShowLabels] = useState(true);
+  const graphApiRef = useRef<GraphApi | null>(null);
   const downloadNightlyDigest = (fmt: "json" | "md" | "pdf") => {
     void apiDownload(`/digest?fmt=${fmt}`, `darkforce-digest.${fmt === "md" ? "md" : fmt}`)
       .catch(() => undefined);
@@ -72,6 +76,46 @@ export default function Analyst() {
 
   const sum = net?.summary ?? {};
   const graphNodes = graphQuery.data?.nodes ?? graphQuery.data?.elements?.nodes ?? [];
+  const graphEdges = graphQuery.data?.edges ?? graphQuery.data?.elements?.edges ?? [];
+
+  const selectedConnections = useMemo(() => {
+    if (!selectedNode) return 0;
+    const id = String(selectedNode.id ?? "");
+    let count = 0;
+    for (const edge of graphEdges) {
+      if (String(edge.source ?? edge.s) === id || String(edge.target ?? edge.t) === id) count++;
+    }
+    return count;
+  }, [selectedNode, graphEdges]);
+
+  const toggleGraphLabels = () => setShowLabels(graphApiRef.current?.toggleLabels() ?? false);
+  const toggleFullscreen = () => {
+    setIsFullscreen((value) => !value);
+    window.setTimeout(() => graphApiRef.current?.resize(), 90);
+  };
+
+  useEffect(() => {
+    document.body.classList.toggle("graph-fullscreen-open", isFullscreen);
+    if (!isFullscreen) return;
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") toggleFullscreen();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [isFullscreen]);
+
+  const graphToolbar = (
+    <div className="graph-toolbar" data-testid="graph-toolbar">
+      <button type="button" title="Zoom out" onClick={() => graphApiRef.current?.zoomOut()}><ZoomOut size={14} /></button>
+      <button type="button" title="Zoom in" onClick={() => graphApiRef.current?.zoomIn()}><ZoomIn size={14} /></button>
+      <button type="button" title="Fit the whole graph on screen" onClick={() => graphApiRef.current?.fit()}><RotateCcw size={14} /></button>
+      <button type="button" title={showLabels ? "Hide names" : "Show names"} onClick={toggleGraphLabels}><Tags size={14} /></button>
+      <button type="button" className="graph-fullscreen-btn" title={isFullscreen ? "Exit full screen (Esc)" : "Full screen"} onClick={toggleFullscreen} aria-label={isFullscreen ? "Exit full screen" : "Open graph full screen"}>
+        {isFullscreen ? <Minimize2 size={14} /> : <Maximize2 size={14} />}
+        <span className="toolbar-label">{isFullscreen ? "Exit full" : "Full screen"}</span>
+      </button>
+    </div>
+  );
 
   return (
     <div className="console-main analyst-page" data-testid="analyst-page">
@@ -80,7 +124,7 @@ export default function Analyst() {
           <div className="section-kicker">
             <Network size={14} /> ANALYST VIEW <span className="mono">/ NETWORK INTELLIGENCE</span>
           </div>
-          <div className="panel-subtitle">Actor network graph, communities, bridges and centrality across the collected onion landscape</div>
+          <div className="panel-subtitle">A map of people and the connections between them across the collected dark-web landscape (in plain words).</div>
         </div>
         <div style={{ display: "flex", gap: "0.5rem", alignItems: "center", flexWrap: "wrap" }}>
           <Link to="/evidence" data-testid="analyst-evidence-link">
@@ -107,26 +151,43 @@ export default function Analyst() {
         {metric(net?.n_nodes, "NODES")}
         {metric(net?.n_edges, "EDGES")}
         {metric(net?.n_communities, "COMMUNITIES")}
-        {metric(getText(sum, 0), "DENSITY")}
+        {metric(getText(sum, 0), "NETWORK DENSITY (0 to 1)")}
       </section>
 
       <section className="console-panel graph-panel" data-testid="analyst-graph-panel">
         <div className="panel-heading">
           <div>
             <div className="section-kicker">
-              <Link2 size={14} /> FULL CONTACT NETWORK <span className="mono">/ CYTOSCAPE</span>
+              <Link2 size={14} /> RELATIONSHIP GRAPH <span className="mono">/ CYTOSCAPE</span>
             </div>
-            <div className="panel-subtitle">Select a node to inspect it. Click an actor row below to open its contract.</div>
+            <div className="panel-subtitle">Select a node to inspect its relationship context.</div>
           </div>
           <div className="graph-legend">
-            <span><i className="legend-dot actor" /> actor</span>
-            <span><i className="legend-dot identity" /> identity</span>
-            <span><i className="legend-dot site" /> site</span>
-            <span><i className="legend-dot finding" /> evidence</span>
+            <span><i className="legend-dot actor" /> person</span>
+            <span><i className="legend-dot identity" /> identity / credential</span>
+            <span><i className="legend-dot site" /> website</span>
+            <span><i className="legend-dot finding" /> clue / finding</span>
           </div>
         </div>
-        <div className="graph-stage">
-          <GraphCanvas graph={graphQuery.data} activeId={selectedNode ? `actor:${getText(selectedNode.label ?? selectedNode.id)}` : undefined} onNodeSelect={setSelectedNode} />
+        <div className={`graph-stage${isFullscreen ? " graph-stage-fullscreen" : ""}`} data-testid="analyst-graph-stage">
+          {graphToolbar}
+          {isFullscreen && (
+            <div className="graph-fs-title" data-testid="graph-fullscreen-title">RELATIONSHIP GRAPH <em>click a dot to inspect · drag to move · scroll to zoom · Esc to exit</em></div>
+          )}
+          <GraphCanvas
+            graph={graphQuery.data}
+            activeId={selectedNode ? `actor:${getText(selectedNode.label ?? selectedNode.id)}` : undefined}
+            onNodeSelect={setSelectedNode}
+            apiRef={graphApiRef}
+          />
+          {selectedNode && (
+            <div className="graph-detail" data-testid="graph-node-inspector">
+              <span>SELECTED NODE</span>
+              <strong>{getText(selectedNode.label ?? selectedNode.id)}</strong>
+              <span>type: {getText(selectedNode.entity_type ?? selectedNode.type ?? selectedNode.kind ?? "entity")} · confidence {Math.round((selectedNode.confidence ?? (selectedNode as { meta?: { conf?: number } }).meta?.conf ?? 0) * 100)}%</span>
+              <span>{selectedConnections} connection{selectedConnections === 1 ? "" : "s"}</span>
+            </div>
+          )}
         </div>
       </section>
 
@@ -135,7 +196,7 @@ export default function Analyst() {
           <div className="panel-heading">
             <div>
               <div className="section-kicker"><Users size={14} /> MOST CENTRAL ACTORS</div>
-              <div className="panel-subtitle">Top-linked identities (eigenvector centrality)</div>
+              <div className="panel-subtitle">The people with the most connections. Technical name: eigenvector centrality.</div>
             </div>
           </div>
           <div className="inventory-table-wrap">
@@ -160,7 +221,7 @@ export default function Analyst() {
           <div className="panel-heading">
             <div>
               <div className="section-kicker"><ShieldAlert size={14} /> BRIDGE ACTORS</div>
-              <div className="panel-subtitle">Identities that connect communities — key pivot points</div>
+              <div className="panel-subtitle">People who link one group to another — the key connection points.</div>
             </div>
           </div>
           <div className="inventory-table-wrap">
@@ -183,7 +244,7 @@ export default function Analyst() {
           <div className="panel-heading">
             <div>
               <div className="section-kicker"><AlertTriangle size={14} /> TOP COMMUNITIES</div>
-              <div className="panel-subtitle">Largest clusters in the link network</div>
+              <div className="panel-subtitle">The biggest groups of connected people in the network.</div>
             </div>
           </div>
           <div className="inventory-table-wrap">

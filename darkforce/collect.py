@@ -214,6 +214,9 @@ def crawl_and_ingest(db, url, use_tor=False, timeout=20):
             content_hash=fp["content_hash"],
             category=kw_cat,
             status=str(getattr(snap, "status", "?")),
+            cert_sans=fp["cert_sans"] or None,
+            tls_issuer=fp["tls_issuer"] or None,
+            cert_fp=fp["cert_fp"] or None,
         )
     except Exception as e:
         res["error"] = f"site: {e}"
@@ -231,7 +234,13 @@ def crawl_and_ingest(db, url, use_tor=False, timeout=20):
         return res
 
     try:
-        findings, fps = detect.scan(snap)
+        from .clearnet_index import load as _load_clearnet
+        idx = _load_clearnet(db)
+    except Exception:
+        idx = None
+
+    try:
+        findings, fps = detect.scan(snap, idx)
         detect.pipeline_findings(site_id, db, findings, fps,
                                  url=url, source_id=_site_source(db, site_id), method="detect:scan")
         res["findings"] = len(findings)

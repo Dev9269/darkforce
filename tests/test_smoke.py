@@ -471,7 +471,7 @@ def test_classify_site_uses_extended_taxonomy():
     cases = {
         "passport for sale": "forgery",
         "Replica watches knockoff": "counterfeit",
-        "phishing kit and spoof": "hacking tools",
+        "phishing kit and spoof": "fraud/scam",
         "jihadist recruitment": "extremism",
         "tor casino and poker": "gambling",
         "dread forum discussion": "forums",
@@ -488,6 +488,29 @@ def test_classify_site_uses_extended_taxonomy():
     }
     for title, expected in cases.items():
         assert classify_site(title=title) == expected, title
+
+
+def test_classify_site_scored_not_first_match():
+    from darkforce.categories import classify_site
+    # A single loose porn token no longer outvotes a real category.
+    assert classify_site(title="sex education forum") == "forums"
+    assert classify_site(title="sex chat") == "forums"
+    # Two scam signals beat one hacking-tools signal.
+    assert classify_site(title="phishing kit and spoof") == "fraud/scam"
+    # Strong porn token still wins.
+    assert classify_site(title="watch porn free videos") == "porn"
+    assert classify_site(title="xxx video archive") == "porn"
+
+
+def test_danger_flags():
+    from darkforce.categories import danger_flags
+    assert "child" in danger_flags(title="download child porn")
+    assert "fraud" in danger_flags(title="phishing kit for sale")
+    assert "intoxicants" in danger_flags(title="buy xanax bars online")
+    assert "weapons" in danger_flags(title="buy ammo and guns")
+    assert "hitman" in danger_flags(title="contract killer hire")
+    assert "extremism" in danger_flags(title="jihadist recruitment")
+    assert danger_flags(title="hidden wiki") == set()
 
 
 def test_sites_all_exposes_lang_and_normalized_category(sqlite_db):

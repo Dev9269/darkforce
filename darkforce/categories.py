@@ -131,7 +131,7 @@ def normalize_category(raw):
             return canon
     return "other"
 
-# Order matters: first matching group wins.
+# Evaluation order on a score tie; does not gate matches (scoring does).
 RULES = [
     "free",
     "hacking tools",
@@ -256,7 +256,7 @@ KEYWORDS = {
     "extremism": [
         r"\bjihad", r"\bterror", r"\bterrorism", r"\baez\b", r"\bal.?qaeda",
         r"\bislamic state", r"\bisis\b", r"\bpropaganda", r"\bradicaliz",
-        r"\bwhite.?supremac", r"\bskinhead", r"\bneo.?nazi", r"\brecruit",
+        r"\bwhite.?supremac", r"\bskinhead", r"\bneo.?nazi", r"\brecruit (for|jihad|t|m|people)",
         r"\bextremism", r"\bfascist", r"\bholocaust denial", r"\bconcentration camp",
     ],
     "gambling": [
@@ -279,10 +279,10 @@ KEYWORDS = {
         r"\bethereum", r"\bcrypto", r"\btumbler", r"\bcoin\b",
         r"\bxmr\b", r"\bmonero",
     ],
-    "markets": [
-        r"\bmarket", r"\bmarketplace", r"\bshop\b", r"\bstore\b",
-        r"\bvendor", r"\bescrow\b", r"\bdarkweb", r"\bmarket link",
-        r"\bmarketplace\b", r"\bboutique",
+"markets": [
+        r"\bmarket\b", r"\bmarketplace\b", r"\bshop\b", r"\bstore\b",
+        r"\bvendor\b", r"\bescrow\b", r"\bdarkweb\b", r"\bmarket link",
+        r"\bboutique",
     ],
     "privacy": [
         r"\bvpn\b", r"\bhosting", r"\bkv\s*m\b", r"\bprivacy",
@@ -301,44 +301,139 @@ KEYWORDS = {
         r"\bporn\b", r"\bxxx\b", r"\badult\b", r"\bescort", r"\bsex\b",
         r"\bnsfw\b", r"\bonlyfans\b", r"\bplayboy\b", r"\bcam girl",
         r"\bcams\b", r"\bnude[sz]?\b", r"\bstripper", r"\bsexting\b",
-        r"\bhentai\b", r"\bblower\b", r"\bwebcam\b", r"\bchild", r"\bcp\b",
+        r"\bhentai\b", r"\bwebcam\b",
     ],
     "directories": [
         r"\bonion", r"\bdirectory", r"\bwiki\b", r"\blink list",
-        r"\bindex\b", r"\bsearch", r"\brepository", r"\bonion dir",
-        r"\bonions", r"\bsearch engine", r"\bwiki\b",
+        r"\bindex\b", r"\bsearch\b", r"\brepository", r"\bonion dir",
+        r"\bonions", r"\bsearch engine\b",
     ],
     "news": [
-        r"\bnews\b", r"\bbreaking\b", r"\bheadline", r"\bcoverage\b",
-        r"\bdispatch", r"\bnews[ -]?wire\b", r"\bwire[ -]service\b",
-        r"\bjournal\b", r"\bwebzine\b", r"\bnewsletter\b",
-        r"\b(network|market|darknet|onion) (status|alerts|updates|report)s?\b",
+        r"\bnews\b", r"\bbreaking news\b", r"\bheadline", r"\bdispatch",
+        r"\bnews[ -]?wire\b", r"\bwire[ -]service\b", r"\bjournal\b",
+        r"\bwebzine\b", r"\bnewsletter\b",
         r"\blatest (news|updates|reports|briefings?)\b", r"\bdaily (brief|report|digest)",
         r"\bpress[ -]release\b", r"\bsecurity[ -]bulletin\b",
     ],
     "other": [r"(?!)"],  # never matches; explicit fallback below
 }
 
+# Score weight per group. Generic catch-all groups (porn's sex/adult/webcam,
+# directory's index/wiki/search) are discounted so a bucket never wins on a
+# single loose token over a decisive hit elsewhere.
+GROUP_WEIGHT = {
+    "drugs": 1.25,
+    "weapons": 1.2,
+    "hitman": 1.2,
+    "forgery": 1.2,
+    "financial": 1.15,
+    "fraud/scam": 1.15,
+    "leaked data": 1.15,
+    "ransomware": 1.15,
+    "extremism": 1.1,
+    "counterfeit": 1.1,
+    "gambling": 1.1,
+    "malware": 1.1,
+    "hacking": 1.0,
+    "hacking tools": 1.0,
+    "resources": 1.0,
+    "free": 1.0,
+    "news": 1.0,
+    "forums": 1.0,
+    "markets": 0.9,
+    "crypto": 0.9,
+    "privacy": 0.8,
+    "porn": 0.85,
+    "directories": 0.65,
+}
+
+# Porn tokens that are decisive on their own (doubles the porn score when
+# present). Generic tokens like "sex", "adult", "webcam", "escort", "nsfw"
+# stay at base weight so a loose mention can't outvote a real category
+# (e.g. "sex education forum" stays a forum).
+PORN_STRONG = {
+    r"\bporn\b", r"\bxxx\b", r"\bonlyfans\b", r"\bplayboy\b", r"\bcams\b",
+    r"\bcam girl", r"\bnude[sz]?\b", r"\bstripper", r"\bsexting\b", r"\bhentai\b",
+}
+
+# Advisory safety flags (not categories) surfaced for any site whose blob
+# touches intoxicants, child material, scams, weapons, hired violence or
+# extremism.
+DANGER_SCAN = [
+    ("intoxicants", KEYWORDS["drugs"]),
+    ("weapons", KEYWORDS["weapons"]),
+    ("hitman", KEYWORDS["hitman"]),
+    ("fraud", KEYWORDS["fraud/scam"]),
+    ("extremism", KEYWORDS["extremism"]),
+    ("child", [r"\bchild\b", r"\bcp\b", r"\bpreteen\b", r"\blolita\b",
+               r"\bcsam\b", r"\bchild ?porn",
+               r"\bminor\b[\w -]{0,12}(nude|explicit|sexual)\b"]),
+]
+
 _PATTERNS = None
+_PORN_STRONG_C = None
+_DANGER_C = None
 
 
 def _patterns():
-    global _PATTERNS
+    global _PATTERNS, _PORN_STRONG_C, _DANGER_C
     if _PATTERNS is None:
-        _PATTERNS = {group: re.compile("|".join(keys), re.I)
+        _PATTERNS = {group: [re.compile(p, re.I) for p in keys]
                      for group, keys in KEYWORDS.items()}
+        _PORN_STRONG_C = [re.compile(p, re.I) for p in PORN_STRONG]
+        _DANGER_C = [(name, [re.compile(p, re.I) for p in patterns])
+                     for name, patterns in DANGER_SCAN]
     return _PATTERNS
+
+
+def _group_hits(blob):
+    """Distinct-pattern hit count and matched patterns per group."""
+    pats = _patterns()
+    scores = {}
+    matched = {}
+    strong_hit = any(p.search(blob) for p in _PORN_STRONG_C)
+    for group, compiled in pats.items():
+        if group == "other":
+            continue
+        hits = [p for p in compiled if p.search(blob)]
+        if not hits:
+            continue
+        score = len(hits) * GROUP_WEIGHT.get(group, 1.0)
+        if group == "porn" and strong_hit:
+            score *= 2.0
+        scores[group] = score
+        matched[group] = [p.pattern for p in hits]
+    return scores, matched
+
+
+def danger_flags(title="", url="", text=""):
+    """Advisory flags (set of strings) for intoxicants/child/scams/etc.
+
+    Independent of classification: a site can be classified "forums" and
+    still carry a "fraud" flag when scam content appears.
+    """
+    blob = " ".join([title or "", url or "", text or ""])
+    _patterns()
+    flags = set()
+    for name, compiled in _DANGER_C:
+        if any(p.search(blob) for p in compiled):
+            flags.add(name)
+    return flags
 
 
 def classify_site(title="", url="", text=""):
     """Return the best-effort category for a site.
 
-    Tries title first (most indicative), then url, then any scraped text.
-    Returns "other" when nothing matches so the UI never shows an empty tag.
+    Scored keyword matching: each group scores on the number of distinct
+    patterns it hits (weighted in GROUP_WEIGHT), so a single generic token
+    never beats a decisive multi-signal category. Ties resolve in RULES
+    order. Tries title first (most indicative), then url, then text, and
+    returns "other" when nothing matches so the UI never shows an empty tag.
     """
-    blob = " ".join([title or "", url or "", text or ""])
-    pats = _patterns()
-    for group in RULES:
-        if pats[group].search(blob):
-            return group
-    return "other"
+    blob = " ".join([title or "", url or "", text or ""]).strip()
+    if not blob:
+        return "other"
+    scores, _ = _group_hits(blob)
+    if not scores:
+        return "other"
+    return max(RULES, key=lambda group: (scores.get(group, 0), -RULES.index(group)))

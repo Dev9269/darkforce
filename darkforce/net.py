@@ -1,3 +1,4 @@
+import os
 import random
 import re
 import threading
@@ -6,6 +7,7 @@ from collections import defaultdict
 
 import requests
 
+from . import tlsfp
 from .config import UAS
 from .detect import Snap
 
@@ -178,7 +180,32 @@ def fetch_snap(url, use_tor=False, timeout=20):
         pass
     host = _host(url)
     hint = classify(html, r.status_code)
+    meta = {"hostname": host, "wall": hint}
+    try:
+        from urllib.parse import urlparse
+
+        link = urlparse(url)
+    except Exception:
+        link = None
+    if link and link.scheme.lower() == "https":
+        proxy = prox["https"] if prox else None
+        info = tlsfp.fetch_tls_peer_info(
+            link.hostname or host, link.port or 443, socks_proxy=proxy,
+            timeout=min(15, max(3, timeout)))
+        meta["tls_cn"] = info.get("tls_cn", "")
+        meta["cert_sans"] = ",".join(info.get("cert_sans") or [])
+        meta["cert_fp"] = info.get("cert_fp", "")
+        meta["tls_issuer"] = info.get("tls_issuer", "")
+        meta["tls_protocol"] = info.get("protocol", "")
+        meta["tls_cipher"] = info.get("cipher", "")
+        ssh_fp = ""
+        if os.environ.get("NET_SSH_PROBE") == "1":
+            sshi = tlsfp.ssh_banner(
+                link.hostname or host, socks_proxy=proxy,
+                timeout=min(10, max(3, timeout)))
+            ssh_fp = sshi.get("host_key_fp", "") or sshi.get("banner", "")
+        meta["ssh_fp"] = ssh_fp
     snap = Snap(url=url, headers=dict(r.headers), html=html, favicon=favicon,
-                meta={"hostname": host, "wall": hint})
+                meta=meta)
     snap.status = r.status_code
     return snap

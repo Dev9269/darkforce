@@ -27,3 +27,7 @@ darkforce.session
 .tg_auth.json
 data/harvest_*.log
 data/harvest_logs/
+data/_start_*.bat
+data/*.log
+_sample.py
+data/raw/
