@@ -18,29 +18,28 @@ export class ApiError extends Error {
 
 type JsonBody = unknown;
 
-// The backend now guards mutating endpoints (POST /scan, /collect, /refresh, users, audit)
-// behind a bearer token from /api/login. We auto-login with the demo admin on first protected
-// call and cache the token, so the console works without a login screen while RBAC stays on.
-const ADMIN_LOGIN = { username: "admin", password: "admin" };
+// The backend guards mutating endpoints (POST /scan, /collect, /refresh, users, audit)
+// behind a bearer token from /api/login. The frontend no longer hardcodes credentials;
+// the admin must configure ADMIN_USER/ADMIN_PASSWORD via env vars (or DF_INSECURE=1).
+// Auto-login is disabled; call login(username, password) explicitly from a login UI.
 let authToken: string | null = null;
-let authPromise: Promise<string | null> | null = null;
 
-async function login(): Promise<string | null> {
+async function login(username?: string, password?: string): Promise<string | null> {
   if (authToken) return authToken;
-  if (!authPromise) {
-    authPromise = (async () => {
-      const res = await fetch(`${BASE}/login`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(ADMIN_LOGIN),
-      });
-      if (!res.ok) return null;
-      const body = (await res.json()) as { token?: string };
-      authToken = body.token ?? null;
-      return authToken;
-    })();
-  }
-  return authPromise;
+  if (!username || !password) return null;
+  const res = await fetch(`${BASE}/login`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ username, password }),
+  });
+  if (!res.ok) return null;
+  const body = (await res.json()) as { token?: string };
+  authToken = body.token ?? null;
+  return authToken;
+}
+
+function setAuthToken(token: string | null) {
+  authToken = token;
 }
 
 async function request<T>(method: string, path: string, body?: JsonBody): Promise<T> {
@@ -58,7 +57,6 @@ async function request<T>(method: string, path: string, body?: JsonBody): Promis
   // If a protected call got 401 (e.g. token expired/reset), retry once with a fresh login.
   if (res.status === 401) {
     authToken = null;
-    authPromise = null;
     const fresh = await login();
     if (fresh) {
       const retry = await fetch(`${BASE}${path}`, {
@@ -88,19 +86,24 @@ export const apiPut = <T>(path: string, body?: JsonBody) => request<T>("PUT", pa
 export const apiPatch = <T>(path: string, body?: JsonBody) =>
   request<T>("PATCH", path, body ?? null);
 export const apiDelete = <T>(path: string) => request<T>("DELETE", path);
+export { login, setAuthToken };
 
 // Authenticated binary download for report/export endpoints that return files.
-export const apiDownload = (path: string, filename: string) =>
-  login().then(async (token) => {
-    const res = await fetch(`${BASE}${path}`, { headers: token ? { Authorization: `Bearer ${token}` } : {} });
-    if (!res.ok) throw new ApiError(res.status, await res.json().catch(() => null));
-    const blob = await res.blob();
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement("a");
-    link.href = url;
-    link.download = filename;
-    document.body.appendChild(link);
-    link.click();
-    link.remove();
-    URL.revokeObjectURL(url);
-  });
+// Assumes caller has already logged in (authToken is set).
+export const apiDownload = (path: string, filename: string) => {
+  const token = authToken;
+  if (!token) throw new ApiError(401, "not authenticated — call login() first");
+  return fetch(`${BASE}${path}`, { headers: { Authorization: `Bearer ${token}` } })
+    .then(async (res) => {
+      if (!res.ok) throw new ApiError(res.status, await res.json().catch(() => null));
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = filename;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      URL.revokeObjectURL(url);
+    });
+};

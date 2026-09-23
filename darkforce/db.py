@@ -30,6 +30,10 @@ def days_ago(n):
 
 
 _EXTRA_SCHEMA = """
+CREATE TABLE IF NOT EXISTS meta (
+  key TEXT PRIMARY KEY,
+  value TEXT
+);
 CREATE TABLE IF NOT EXISTS watchlists (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   name TEXT, pattern TEXT, kind TEXT, enabled INTEGER DEFAULT 1,
@@ -113,6 +117,10 @@ CREATE UNIQUE INDEX IF NOT EXISTS ux_link_evidence ON link_evidence(link_id,cont
 """
 
 PG_EXTRA_SCHEMA = """
+CREATE TABLE IF NOT EXISTS meta (
+  key TEXT PRIMARY KEY,
+  value TEXT
+);
 CREATE TABLE IF NOT EXISTS watchlists (
   id BIGSERIAL PRIMARY KEY,
   name TEXT, pattern TEXT, kind TEXT, enabled INTEGER DEFAULT 1,
@@ -694,6 +702,18 @@ class BaseDB:
         w = self.one("SELECT * FROM wallets WHERE address=?", (address,))
         if not w:
             return None
+        # Posts that reference this wallet address
+        posts_ref = [dict(r) for r in self.q(
+            "SELECT p.id, p.ts, p.title, p.site_id, s.url as site_url "
+            "FROM posts p LEFT JOIN sites s ON p.site_id=s.id "
+            "WHERE p.raw LIKE ? ORDER BY p.ts DESC LIMIT 20",
+            (f"%{address}%",))]
+        # Observations that extracted this wallet
+        obs_ref = [dict(r) for r in self.q(
+            "SELECT o.id, o.ts, o.method, o.kind, o.source_name, o.site_id, s.url as site_url "
+            "FROM observations o LEFT JOIN sites s ON o.site_id=s.id "
+            "WHERE o.raw LIKE ? ORDER BY o.ts DESC LIMIT 20",
+            (f"%{address}%",))]
         return {
             **w,
             "cluster": self.wallet_cluster(address),
@@ -703,6 +723,8 @@ class BaseDB:
             if w["kind"] in ("btc", "xmr")
             else [dict(r) for r in self.q(
                 "SELECT * FROM identifiers WHERE value=? ORDER BY id", (address,))],
+            "posts": posts_ref,
+            "observations": obs_ref,
         }
 
     def wallet_cluster(self, address, depth=6):
@@ -900,6 +922,7 @@ class BaseDB:
     # ---------- queries ----------
     def stats(self):
         sources = [dict(r) for r in self.q("SELECT name, type, url FROM sources ORDER BY name")]
+        last_pass = self.one("SELECT value FROM meta WHERE key='last_collection_pass'")
         return {
             "actors": self.one("SELECT COUNT(*) c FROM actors")["c"],
             "handles": self.one("SELECT COUNT(*) c FROM handles")["c"],
@@ -913,6 +936,7 @@ class BaseDB:
             "sources": [s["name"] for s in sources],
             "source_status": "SEEDED" if sources else "EMPTY",
             "source": sources[0]["name"] if sources else "",
+            "last_collection_pass": last_pass["value"] if last_pass else None,
         }
 
     def recent_activity(self, hours=24):
@@ -978,18 +1002,29 @@ class BaseDB:
                 "   OR a.id IN (SELECT actor_id FROM identifiers WHERE lower(value) LIKE ?) "
                 "ORDER BY a.confidence DESC, a.id DESC", (f"%{q}%", f"%{q}%", f"%{q}%"))]
         if kind in ("all", "id", "identifier"):
-            res["identifiers"] = [dict(r) for r in self.q(
-                "SELECT * FROM identifiers WHERE lower(kind||' '||value||' '||COALESCE(detail,'')) LIKE ?",
-                (f"%{q}%",))]
+            base = "SELECT * FROM identifiers WHERE lower(kind||' '||value||' '||COALESCE(detail,'')) LIKE ?"
+            args = [f"%{q}%"]
+            if start:
+                base += " AND ts >= ?"
+                args.append(start)
+            if end:
+                base += " AND ts <= ?"
+                args.append(end)
+            res["identifiers"] = [dict(r) for r in self.q(base, tuple(args))]
         if kind in ("all", "site"):
             if cat:
-                res["sites"] = [dict(r) for r in self.q(
-                    "SELECT * FROM sites WHERE category=? AND "
-                    "lower(url||' '||COALESCE(title,'')) LIKE ?",
-                    (cat, f"%{q}%"))]
+                base = "SELECT * FROM sites WHERE category=? AND lower(url||' '||COALESCE(title,'')) LIKE ?"
+                args = [cat, f"%{q}%"]
             else:
-                res["sites"] = [dict(r) for r in self.q(
-                    "SELECT * FROM sites WHERE lower(url||' '||COALESCE(title,'')) LIKE ?", (f"%{q}%",))]
+                base = "SELECT * FROM sites WHERE lower(url||' '||COALESCE(title,'')) LIKE ?"
+                args = [f"%{q}%"]
+            if start:
+                base += " AND first_seen >= ?"
+                args.append(start)
+            if end:
+                base += " AND first_seen <= ?"
+                args.append(end)
+            res["sites"] = [dict(r) for r in self.q(base, tuple(args))]
         return res
 
     def identifiers_for_actor(self, actor_id):
@@ -1070,7 +1105,7 @@ class BaseDB:
         evs.sort(key=lambda e: e["ts"] or "")
         return evs
 
-    def graph(self, actor_id=None, max_nodes=300):
+    def graph(self, actor_id=None, max_nodes=300, min_conf=0.0):
         nodes, edges, seen = {}, [], set()
 
         def add_n(i, label, kind, meta=None):
@@ -1097,6 +1132,8 @@ class BaseDB:
             for a in self.q("SELECT * FROM actors LIMIT ?", (max_nodes,)):
                 add_n(f"actor:{a['canon']}", a["canon"], "actor", {"conf": a["confidence"]})
             for l in self.q("SELECT * FROM links LIMIT ?", (max_nodes * 2,)):
+                if l["confidence"] is not None and l["confidence"] < min_conf:
+                    continue
                 sn = f"{l['src_type']}:{l['src_value'][:18]}"
                 tn = f"{l['tgt_type']}:{l['tgt_value'][:18]}"
                 add_n(sn, l["src_value"][:26], l["src_type"])

@@ -244,6 +244,26 @@ export interface WalletCluster {
 export interface WalletDetail extends Wallet {
   cluster?: WalletCluster;
   identifiers?: Identifier[];
+  posts?: PostRef[];
+  observations?: ObservationRef[];
+}
+
+export interface PostRef {
+  id?: number;
+  ts?: string;
+  title?: string;
+  site_id?: number;
+  site_url?: string;
+}
+
+export interface ObservationRef {
+  id?: number;
+  ts?: string;
+  method?: string;
+  kind?: string;
+  source_name?: string;
+  site_id?: number;
+  site_url?: string;
 }
 
 export interface Breach {

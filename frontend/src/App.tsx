@@ -13,6 +13,7 @@ const Breaches = lazy(() => import("@/pages/Breaches"));
 const Cases = lazy(() => import("@/pages/Cases"));
 const Resources = lazy(() => import("@/pages/Resources"));
 const News = lazy(() => import("@/pages/News"));
+const GraphPage = lazy(() => import("@/pages/GraphPage"));
 
 export default function App() {
   return (
@@ -27,6 +28,7 @@ export default function App() {
         <Route path="/cases" element={<Cases />} />
         <Route path="/resources" element={<Resources />} />
         <Route path="/news" element={<News />} />
+        <Route path="/graph" element={<GraphPage />} />
       </Routes>
     </Suspense>
   );

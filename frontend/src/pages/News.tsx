@@ -19,7 +19,7 @@ export default function News() {
   const newsQuery = useQuery({
     queryKey: ["news"],
     queryFn: () => getNews(60),
-    refetchInterval: 60_000,
+    refetchInterval: 15000,
     retry: false,
   });
   const items: NewsItem[] = Array.isArray(newsQuery.data) ? newsQuery.data : [];

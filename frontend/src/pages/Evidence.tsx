@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
-import { AlertTriangle, ArrowLeft, CircleHelp, Fingerprint, Link2, LoaderCircle, Scale, Search, ShieldCheck } from "lucide-react";
+import { AlertTriangle, ArrowLeft, CircleHelp, Copy, Fingerprint, Link2, LoaderCircle, Maximize2, Minimize2, Scale, Search, ShieldCheck } from "lucide-react";
 import { Link } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -53,38 +53,82 @@ function TrustEditor({ row }: { row: TrustRow }) {
 
 function ChainView({ chain }: { chain?: EvidenceChain }) {
   if (!chain?.object) return <div className="query-state"><CircleHelp size={16} /> No object for this id — nothing observed.</div>;
+  const [allOpen, setAllOpen] = useState(false);
+  const [expanded, setExpanded] = useState<Record<string, boolean>>({});
+  const toggleAll = () => {
+    const next = !allOpen;
+    setAllOpen(next);
+    const nextExpanded: Record<string, boolean> = {};
+    if (next) {
+      nextExpanded["object"] = true;
+      (chain.observations ?? []).forEach((_, i) => { nextExpanded[`obs-${i}`] = true; });
+      (chain.attribution ?? []).forEach((_, i) => { nextExpanded[`attr-${i}`] = true; });
+    }
+    setExpanded(nextExpanded);
+  };
+  const exportChain = () => {
+    const payload = JSON.stringify(chain, null, 2);
+    navigator.clipboard.writeText(payload).then(() => toast.success("Chain copied to clipboard")).catch(() => toast.error("Clipboard failed"));
+  };
+  const detailsKeys = [
+    { key: "object", label: "STORED OBJECT", severity: "medium" },
+    ...(chain.observations ?? []).map((obs, i) => ({ key: `obs-${i}`, label: `${getText(obs.method, "observation")} / ${getText(obs.kind, "kind")}`, severity: "low" })),
+    ...(chain.attribution ?? []).map((attr, i) => ({ key: `attr-${i}`, label: `${getText(attr.statement, "asserts").toUpperCase()} / ${getText(attr.subject, "—")}`, severity: "low" })),
+  ];
   return (
     <div className="stat-detail-table-stack" data-testid="evidence-chain-view">
-      <div className="panel-subtitle">
-        Chain for {getText(chain.type, "object")} #{chain.id}
+      <div className="panel-subtitle" style={{ display: "flex", gap: "0.75rem", alignItems: "center", flexWrap: "wrap" }}>
+        <span>Chain for {getText(chain.type, "object")} #{chain.id}</span>
         {chain.trust != null ? <> · source trust <span className="mono">{(chain.trust * 100).toFixed(0)}%</span></> : null}
+        <span className="header-divider" />
+        <button type="button" className="console-button" size="sm" onClick={toggleAll} data-testid="chain-toggle-all">
+          {allOpen ? <Minimize2 size={12} /> : <Maximize2 size={12} />} {allOpen ? "Collapse All" : "Expand All"}
+        </button>
+        <button type="button" className="console-button" size="sm" onClick={exportChain} data-testid="chain-export">
+          <Copy size={12} /> Export JSON
+        </button>
       </div>
-      <details className="finding-item severity-medium" open>
-        <summary><span className="severity-dot" /><span className="finding-title">STORED OBJECT</span></summary>
-        <div className="evidence-text mono">{JSON.stringify(chain.object, null, 2)}</div>
-        <div className="finding-source mono">CONTENT HASH / {getText(chain.object?.content_hash, "none")}</div>
-      </details>
-      {(chain.observations ?? []).map((obs, index) => (
-        <details key={String(obs.content_hash ?? obs.id ?? index)} className="finding-item severity-low" open={index === 0}>
-          <summary>
-            <span className="severity-dot" />
-            <span className="finding-title">{getText(obs.method, "observation")} / {getText(obs.kind, "kind")}</span>
-            {obs.evidence ? <span className="mono muted-text">&nbsp;[{getText(obs.evidence).slice(0, 60)}]</span> : null}
-          </summary>
-          <div className="evidence-text mono">{getText(obs.raw, "(no raw fragment captured)")}</div>
-          <div className="finding-source mono">
-            HASH / {getText(obs.content_hash, "none")} · {getText(obs.source_name, "no source")} · {getText(obs.observed_at, "")}
-          </div>
-        </details>
-      ))}
-      {(chain.attribution ?? []).map((attr) => <AttributionRow key={attr.id} attr={attr} />)}
+      {detailsKeys.map(({ key, label, severity }) => {
+        const isOpen = allOpen || expanded[key];
+        if (key === "object") {
+          return (
+            <details key={key} className={`finding-item severity-${severity}`} open={isOpen} onToggle={() => setExpanded((p) => ({ ...p, [key]: !p[key] }))}>
+              <summary><span className="severity-dot" /><span className="finding-title">{label}</span></summary>
+              <div className="evidence-text mono">{JSON.stringify(chain.object, null, 2)}</div>
+              <div className="finding-source mono">CONTENT HASH / {getText(chain.object?.content_hash, "none")}</div>
+            </details>
+          );
+        }
+        if (key.startsWith("obs-")) {
+          const idx = parseInt(key.split("-")[1], 10);
+          const obs = chain.observations![idx];
+          return (
+            <details key={key} className={`finding-item severity-${severity}`} open={isOpen} onToggle={() => setExpanded((p) => ({ ...p, [key]: !p[key] }))}>
+              <summary>
+                <span className="severity-dot" />
+                <span className="finding-title">{label}</span>
+                {obs.evidence ? <span className="mono muted-text">&nbsp;[{getText(obs.evidence).slice(0, 60)}]</span> : null}
+              </summary>
+              <div className="evidence-text mono">{getText(obs.raw, "(no raw fragment captured)")}</div>
+              <div className="finding-source mono">
+                HASH / {getText(obs.content_hash, "none")} · {getText(obs.source_name, "no source")} · {getText(obs.observed_at, "")}
+              </div>
+            </details>
+          );
+        }
+        if (key.startsWith("attr-")) {
+          const idx = parseInt(key.split("-")[1], 10);
+          return <AttributionRow key={key} attr={chain.attribution![idx]} open={isOpen} onToggle={() => setExpanded((p) => ({ ...p, [key]: !p[key] }))} />;
+        }
+        return null;
+      })}
     </div>
   );
 }
 
-function AttributionRow({ attr }: { attr: Attribution }) {
-  return (
-    <div className="finding-item severity-low attribution-row" data-testid="attribution-row">
+function AttributionRow({ attr, open, onToggle }: { attr: Attribution; open?: boolean; onToggle?: () => void }) {
+  const content = (
+    <>
       <div className="finding-title">
         <Scale size={13} /> {getText(attr.statement, "asserts").toUpperCase()}
         <span className="mono muted-text">&nbsp;{getText(attr.subject, "—")}</span>
@@ -96,8 +140,17 @@ function AttributionRow({ attr }: { attr: Attribution }) {
           {getText(attr.note) ? ` · ${attr.note}` : ""}
         </div>
       </div>
-    </div>
+    </>
   );
+  if (onToggle) {
+    return (
+      <details className="finding-item severity-low attribution-row" data-testid="attribution-row" open={open} onToggle={onToggle}>
+        <summary><span className="severity-dot" /><span className="finding-title">{getText(attr.statement, "asserts").toUpperCase()} / {getText(attr.subject, "—")}</span></summary>
+        {content}
+      </details>
+    );
+  }
+  return <div className="finding-item severity-low attribution-row" data-testid="attribution-row">{content}</div>;
 }
 
 export default function Evidence() {
@@ -113,12 +166,13 @@ export default function Evidence() {
   const [catConfidence, setCatConfidence] = useState(0.5);
   const [catNote, setCatNote] = useState("");
 
-  const trustsQuery = useQuery({ queryKey: ["source-trusts"], queryFn: getSourceTrusts, retry: false });
-  const attributionQuery = useQuery({ queryKey: ["attribution"], queryFn: () => getAttribution(), retry: false });
+  const trustsQuery = useQuery({ queryKey: ["source-trusts"], queryFn: getSourceTrusts, refetchInterval: 15000, retry: false });
+  const attributionQuery = useQuery({ queryKey: ["attribution"], queryFn: () => getAttribution(), refetchInterval: 15000, retry: false });
   const chainQuery = useQuery({
     queryKey: ["evidence-chain", lookup?.type, lookup?.id],
     queryFn: () => getEvidenceChain(lookup!.type, lookup!.id),
     enabled: Boolean(lookup?.id),
+    refetchInterval: 15000,
     retry: false,
   });
 

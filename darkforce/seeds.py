@@ -466,6 +466,51 @@ async def _telegram_pull(api_id, api_hash, session, channels, limit=25):
     return out
 
 
+DREAD_HF_DATASET = "trentmkelly/dread-crime-forum"
+DREAD_HF_PATH = os.getenv("DREAD_HF_PATH", "")  # optional local parquet path
+
+
+def collect_dread_hf(limit: int = 200):
+    """Ingest Dread forum posts from HuggingFace dataset (trentmkelly/dread-crime-forum).
+
+    Requires: pip install datasets
+    Optional env: DREAD_HF_PATH=<local_parquet_dir> to load from local files.
+    Returns [{title, url, category}] where url is the Dread post link.
+    """
+    out = []
+    try:
+        from datasets import load_dataset
+    except ImportError:
+        return out
+    try:
+        if DREAD_HF_PATH:
+            ds = load_dataset("parquet", data_dir=DREAD_HF_PATH, split="train")
+        else:
+            ds = load_dataset(DREAD_HF_DATASET, split="train")
+    except Exception:
+        return out
+    count = 0
+    for row in ds:
+        if count >= limit:
+            break
+        # Expected columns: title, url, subdread, author, date, body
+        title = (row.get("title") or row.get("subject") or "Dread post")[:200]
+        url = row.get("url") or row.get("link") or ""
+        subdread = row.get("subdread") or row.get("subforum") or ""
+        author = row.get("author") or row.get("username") or ""
+        if not url:
+            continue
+        out.append({
+            "title": f"[{subdread}] {title}" if subdread else title,
+            "url": url,
+            "category": "forums",
+            "purpose": "forums",
+            "author": author,
+        })
+        count += 1
+    return out
+
+
 def collect_hibp(emails=None):
     """Optional HaveIBeenPwned breach lookup for configured emails.
 
@@ -534,6 +579,40 @@ def collect_news():
     return out
 
 
+BREACH_CATALOG = [
+    {"name": "LinkedIn 2012", "type": "credential", "primary_entity": "LinkedIn", "source_url": "https://haveibeenpwned.com/PwnedWebsites#LinkedIn", "ts_acquired": "2012-06-05T00:00:00Z", "records": 164611595, "description": "SHA1 hashes, no salt"},
+    {"name": "Adobe 2013", "type": "credential", "primary_entity": "Adobe", "source_url": "https://haveibeenpwned.com/PwnedWebsites#Adobe", "ts_acquired": "2013-10-04T00:00:00Z", "records": 152445165, "description": "Encrypted passwords, password hints"},
+    {"name": "Equifax 2017", "type": "personal", "primary_entity": "Equifax", "source_url": "https://haveibeenpwned.com/PwnedWebsites#Equifax", "ts_acquired": "2017-09-07T00:00:00Z", "records": 147900000, "description": "SSN, DOB, addresses, driver's license"},
+    {"name": "Marriott 2018", "type": "personal", "primary_entity": "Marriott International", "source_url": "https://haveibeenpwned.com/PwnedWebsites#Marriott", "ts_acquired": "2018-11-30T00:00:00Z", "records": 500000000, "description": "Passport numbers, travel history, payment"},
+    {"name": "Facebook 2019", "type": "personal", "primary_entity": "Facebook", "source_url": "https://haveibeenpwned.com/PwnedWebsites#Facebook", "ts_acquired": "2019-04-03T00:00:00Z", "records": 533000000, "description": "Phone numbers, names, locations, emails"},
+    {"name": "LinkedIn 2021", "type": "credential", "primary_entity": "LinkedIn", "source_url": "https://haveibeenpwned.com/PwnedWebsites#LinkedIn", "ts_acquired": "2021-04-06T00:00:00Z", "records": 700000000, "description": "Scraped public profiles"},
+    {"name": "RockYou2021", "type": "credential", "primary_entity": "RockYou / combo list", "source_url": "https://haveibeenpwned.com/PwnedWebsites#RockYou2021", "ts_acquired": "2021-06-05T00:00:00Z", "records": 8400000000, "description": "Aggregated password dictionary 8.4B"},
+    {"name": "T-Mobile 2021", "type": "personal", "primary_entity": "T-Mobile", "source_url": "https://haveibeenpwned.com/PwnedWebsites#T-Mobile", "ts_acquired": "2021-08-17T00:00:00Z", "records": 76600000, "description": "SSN, driver's license, IMEI"},
+    {"name": "Twitter 2022", "type": "personal", "primary_entity": "Twitter / X", "source_url": "https://haveibeenpwned.com/PwnedWebsites#Twitter", "ts_acquired": "2022-07-21T00:00:00Z", "records": 5400000, "description": "Phone, email, names, locations"},
+    {"name": "LastPass 2022", "type": "credential", "primary_entity": "LastPass", "source_url": "https://haveibeenpwned.com/PwnedWebsites#LastPass", "ts_acquired": "2022-12-22T00:00:00Z", "records": 0, "description": "Encrypted vaults, metadata accessed"},
+    {"name": "MOVEit 2023", "type": "corporate", "primary_entity": "Progress Software / MOVEit Transfer", "source_url": "https://haveibeenpwned.com/PwnedWebsites#MOVEit", "ts_acquired": "2023-06-01T00:00:00Z", "records": 60000000, "description": "SQL injection, file transfer data"},
+    {"name": "Change Healthcare 2024", "type": "medical", "primary_entity": "Change Healthcare / UnitedHealth", "source_url": "https://haveibeenpwned.com/PwnedWebsites#ChangeHealthcare", "ts_acquired": "2024-02-21T00:00:00Z", "records": 100000000, "description": "Medical claims, PHI, insurance data"},
+    {"name": "National Public Data 2024", "type": "personal", "primary_entity": "National Public Data", "source_url": "https://haveibeenpwned.com/PwnedWebsites#NationalPublicData", "ts_acquired": "2024-08-06T00:00:00Z", "records": 2900000000, "description": "SSN, DOB, addresses, phone, email"},
+    {"name": "AT&T 2024", "type": "telecom", "primary_entity": "AT&T", "source_url": "https://haveibeenpwned.com/PwnedWebsites#AT&T", "ts_acquired": "2024-03-01T00:00:00Z", "records": 73000000, "description": "Call logs, cell site data"},
+    {"name": "Snowflake 2024", "type": "corporate", "primary_entity": "Snowflake customer accounts", "source_url": "https://haveibeenpwned.com/PwnedWebsites#Snowflake", "ts_acquired": "2024-06-01T00:00:00Z", "records": 0, "description": "Credential stuffing, data exfiltration"},
+]
+
+
+def seed_breaches(db):
+    """Insert curated breach catalog into breaches table (idempotent)."""
+    for b in BREACH_CATALOG:
+        try:
+            db.exe("""
+                INSERT INTO breaches(name, type, primary_entity, source_url, ts_acquired)
+                VALUES (?, ?, ?, ?, ?)
+                ON CONFLICT(name) DO UPDATE SET
+                    type=excluded.type, primary_entity=excluded.primary_entity,
+                    source_url=excluded.source_url, ts_acquired=excluded.ts_acquired
+            """, (b["name"], b["type"], b["primary_entity"], b["source_url"], b["ts_acquired"]))
+        except Exception:
+            pass
+
+
 def collect_successor_probes():
     """Watchlist-backed scan for sites that announce themselves as a
     successor / continuation of a defunct market. Returns {title,url,category}
@@ -563,6 +642,8 @@ def collect_source(name):
         return collect_onionoo()
     if name == "telegram":
         return collect_telegram()
+    if name == "dread_hf":
+        return collect_dread_hf()
     if name == "directory":
         return [{"title": t, "url": "http://" + o, "category": c} for t, o, c in ONION_DIRECTORY]
     if name == "resource":

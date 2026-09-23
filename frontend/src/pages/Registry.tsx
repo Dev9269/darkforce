@@ -17,12 +17,13 @@ export default function Registry() {
   const [searchInput, setSearchInput] = useState("");
   const [page, setPage] = useState(1);
 
-  const categoriesQuery = useQuery({ queryKey: ["categories"], queryFn: getCategories, retry: false });
+  const categoriesQuery = useQuery({ queryKey: ["categories"], queryFn: getCategories, refetchInterval: 15000, retry: false });
   const categories = categoriesQuery.data?.categories ?? [];
 
   const catalogQuery = useQuery({
     queryKey: ["catalog", category, searchInput, page],
     queryFn: () => getSiteCatalog({ category: category || undefined, q: searchInput || undefined, page, perPage: PER_PAGE }),
+    refetchInterval: 15000,
     retry: false,
   });
 

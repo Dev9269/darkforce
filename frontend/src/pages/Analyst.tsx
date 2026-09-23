@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { AlertTriangle, BarChart3, CloudDownload, FileJson, FileText, GitFork, Link2, Maximize2, Minimize2, Network, RotateCcw, ShieldAlert, Tags, Users, ZoomIn, ZoomOut } from "lucide-react";
+import { AlertTriangle, BarChart3, CircleHelp, CloudDownload, FileJson, FileText, GitFork, Link2, Maximize2, Minimize2, Network, RotateCcw, ShieldAlert, Tags, Timer, Users, ZoomIn, ZoomOut } from "lucide-react";
 import { Link } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import GraphCanvas, { type GraphApi } from "@/components/GraphCanvas";
@@ -32,9 +32,9 @@ export default function Analyst() {
       .catch(() => undefined);
   };
 
-  const graphQuery = useQuery({ queryKey: ["analyst-graph"], queryFn: () => getGraph(""), retry: false });
-  const actorsQuery = useQuery({ queryKey: ["analyst-actors"], queryFn: getActors, retry: false });
-  const netQuery = useQuery({ queryKey: ["analyst-network"], queryFn: getNetworkAnalysis, retry: false });
+  const graphQuery = useQuery({ queryKey: ["analyst-graph"], queryFn: () => getGraph(""), refetchInterval: 15000, retry: false });
+  const actorsQuery = useQuery({ queryKey: ["analyst-actors"], queryFn: getActors, refetchInterval: 15000, retry: false });
+  const netQuery = useQuery({ queryKey: ["analyst-network"], queryFn: getNetworkAnalysis, refetchInterval: 15000, retry: false });
 
   const net = netQuery.data;
   const byCentrality = useMemo(
@@ -260,6 +260,18 @@ export default function Analyst() {
                 {!topCommunities.length && <tr><td colSpan={2} className="muted-text">No communities found.</td></tr>}
               </tbody>
             </table>
+          </div>
+        </section>
+
+        <section className="console-panel" data-testid="analyst-timeline-panel">
+          <div className="panel-heading">
+            <div>
+              <div className="section-kicker"><Timer size={14} /> ACTIVITY TIMELINE</div>
+              <div className="panel-subtitle">Temporal view of observations and findings across the network.</div>
+            </div>
+          </div>
+          <div className="query-state" data-testid="timeline-placeholder">
+            <CircleHelp size={16} /> Timeline data available via <Link to="/graph">Graph</Link> with <code>?min_conf=</code> filter, or <Link to="/">Home</Link> timeline range picker.
           </div>
         </section>
       </div>

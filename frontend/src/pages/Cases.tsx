@@ -102,9 +102,9 @@ export default function Cases() {
   const [memberNote, setMemberNote] = useState("");
   const [memberTag, setMemberTag] = useState("");
 
-  const casesQuery = useQuery({ queryKey: ["cases", statusFilter], queryFn: () => getCases(statusFilter || undefined), retry: false });
-  const caseQuery = useQuery({ queryKey: ["case", selectedId], queryFn: () => getCase(selectedId!), enabled: Boolean(selectedId), retry: false });
-  const alertsQuery = useQuery({ queryKey: ["alerts-ops"], queryFn: getAlerts, refetchInterval: 30_000, retry: false });
+  const casesQuery = useQuery({ queryKey: ["cases", statusFilter], queryFn: () => getCases(statusFilter || undefined), refetchInterval: 15000, retry: false });
+  const caseQuery = useQuery({ queryKey: ["case", selectedId], queryFn: () => getCase(selectedId!), enabled: Boolean(selectedId), refetchInterval: 15000, retry: false });
+  const alertsQuery = useQuery({ queryKey: ["alerts-ops"], queryFn: getAlerts, refetchInterval: 15000, retry: false });
 
   const createMutation = useMutation({
     mutationFn: () => createCase({ name, status: createStatus, owner, notes }),

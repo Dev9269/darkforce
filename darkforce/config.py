@@ -39,9 +39,18 @@ TOR_HOST = os.getenv("TOR_HOST", "127.0.0.1")
 TOR_PORT = int(os.getenv("TOR_PORT", "9050"))
 
 # RBAC / sessions. SECRET_KEY signs the bearer tokens issued at /api/login.
-SECRET_KEY = os.getenv("SECRET_KEY", "darkforce-dev-secret-change-me")
-ADMIN_USER = os.getenv("ADMIN_USER", "admin")
-ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "darkforce-admin")
+# These MUST be set via environment variables in production.
+# Set DF_INSECURE=1 to allow defaults (dev only).
+_insecure = os.getenv("DF_INSECURE", "0") == "1"
+def _require_env(var: str, default: str | None = None) -> str:
+    val = os.getenv(var, default)
+    if val is None and not _insecure:
+        raise RuntimeError(f"Missing required env var: {var} (set DF_INSECURE=1 to allow defaults)")
+    return val or default
+
+SECRET_KEY = _require_env("SECRET_KEY", "darkforce-dev-secret-change-me" if _insecure else None)
+ADMIN_USER = _require_env("ADMIN_USER", "admin" if _insecure else None)
+ADMIN_PASSWORD = _require_env("ADMIN_PASSWORD", "darkforce-admin" if _insecure else None)
 
 # Optional threat-intel feed API keys (free tiers; collectors no-op without them).
 ALIENVAULT_OTX_KEY = os.getenv("ALIENVAULT_OTX_KEY", "")

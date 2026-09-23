@@ -1,3 +1,4 @@
+import datetime
 import json
 import os
 import uuid
@@ -7,6 +8,9 @@ from fastapi import BackgroundTasks, Depends, FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
+from slowapi import Limiter, _rate_limit_exceeded_handler
+from slowapi.errors import RateLimitExceeded
+from slowapi.util import get_remote_address
 
 from . import auth, clearnet_index, detect, link, net, seeds, stylo
 from .collect import crawl_and_ingest
@@ -17,8 +21,11 @@ from .tor import active_proxy
 
 WEB_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "web")
 
+limiter = Limiter(key_func=get_remote_address)
 db = DB()
 app = FastAPI(title="DarkForce - Dark Web Threat Actor De-anonymization")
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
 COLLECT_JOBS = {}
 
@@ -108,7 +115,8 @@ class CaseMemberReq(BaseModel):
 
 
 @app.post("/api/login")
-def login(req: LoginReq):
+@limiter.limit("10/minute")
+def login(request: Request, req: LoginReq):
     u = db.get_user(req.username)
     if not u or not auth.verify_password(req.password, u["password_hash"]):
         raise HTTPException(401, "invalid username or password")
@@ -160,10 +168,10 @@ def stats():
 
 
 @app.get("/api/search")
-def search(q: str = "", kind: str = "all", category: str = ""):
+def search(q: str = "", kind: str = "all", category: str = "", start: str = "", end: str = ""):
     if not (q or "").strip():
         return []
-    return db.search(q, kind, category=category or None)
+    return db.search(q, kind, category=category or None, start=start or None, end=end or None)
 
 
 @app.get("/api/identifiers")
@@ -301,6 +309,103 @@ def cases_member_del(cid: int, mid: int, who: dict = Depends(auth.require_role("
     return {"deleted": mid}
 
 
+@app.get("/api/cases/{cid}/bundle")
+def case_bundle(cid: int, fmt: str = "json", who: dict = Depends(auth.require_role("viewer"))):
+    """Export a case bundle with chain-of-custody manifest (JSON/PDF).
+
+    Bundle includes: case header, all members with evidence chains,
+    HMAC-SHA256 manifest of all content hashes for integrity verification.
+    """
+    import hmac as _hmac
+    import hashlib as _hashlib
+    from .config import SECRET_KEY
+
+    case = db.get_case(cid)
+    if not case:
+        raise HTTPException(404, "case not found")
+
+    members = db.case_members(cid)
+    bundle = {
+        "case": case,
+        "members": [],
+        "manifest": {
+            "created_at": __import__("datetime").datetime.utcnow().isoformat() + "Z",
+            "case_id": cid,
+            "items": [],
+        },
+    }
+
+    for m in members:
+        # Build evidence chain for this member
+        chain = db.evidence_chain(m["object_type"], m["object_id"])
+        content_hashes = []
+        if chain:
+            if chain.object and chain.object.get("content_hash"):
+                content_hashes.append(chain.object["content_hash"])
+            for obs in chain.observations or []:
+                if obs.get("content_hash"):
+                    content_hashes.append(obs["content_hash"])
+            for attr in chain.attribution or []:
+                pass  # attributions don't have content_hash
+
+        member_bundle = {
+            "member": m,
+            "evidence_chain": chain,
+            "content_hashes": content_hashes,
+        }
+        bundle["members"].append(member_bundle)
+        for ch in content_hashes:
+            bundle["manifest"]["items"].append({
+                "member_id": m["id"],
+                "content_hash": ch,
+            })
+
+    # HMAC manifest
+    manifest_json = json.dumps(bundle["manifest"], sort_keys=True)
+    manifest_hmac = _hmac.new(SECRET_KEY.encode(), manifest_json.encode(), _hashlib.sha256).hexdigest()
+    bundle["manifest"]["hmac_sha256"] = manifest_hmac
+
+    if fmt == "pdf":
+        # Render a compact PDF of the case bundle
+        from .export import report_pdf
+        meta = {
+            "title": f"Case #{cid}: {case['name']} - Chain of Custody Bundle",
+            "subtitle": f"Case folder export with evidence chains and HMAC manifest",
+            "classification": "UNCLASSIFIED // PUBLIC RELEASE",
+            "date": datetime.date.today().isoformat(),
+            "backend": "sqlite",
+            "coverage": f"{len(members)} member(s), {sum(len(m['content_hashes']) for m in bundle['members'])} content hash(es)",
+            "verdict": {
+                "confidence": 1.0,
+                "basis": "Chain-of-custody HMAC manifest",
+                "rationale": f"Manifest HMAC-SHA256: {manifest_hmac[:32]}...",
+            },
+            "method_notes": [
+                "Each evidence chain links back to its raw observation and source.",
+                f"Manifest HMAC-SHA256 keyed by SECRET_KEY validates integrity: {manifest_hmac}",
+            ],
+        }
+        records = []
+        for m in bundle["members"]:
+            if m["evidence_chain"] and m["evidence_chain"].object:
+                records.append(m["evidence_chain"].object)
+            for obs in m["evidence_chain"].observations or []:
+                records.append({"type": "observation", **obs})
+            for attr in m["evidence_chain"].attribution or []:
+                records.append({"type": "attribution", **attr})
+        from .export import report_pdf
+        data = report_pdf(meta, records=records[:60])
+        return Response(content=data, media_type="application/pdf",
+                        headers={"Content-Disposition": f"attachment; filename=case_{cid}_bundle.pdf"})
+
+    # JSON bundle
+    return Response(
+        content=json.dumps(bundle, indent=2, default=str),
+        media_type="application/json",
+        headers={"Content-Disposition": f"attachment; filename=case_{cid}_bundle.json"},
+    )
+
+
 @app.post("/api/ops/detect")
 def ops_detect(who: dict = Depends(auth.require_role("analyst"))):
     """Run operational detection: gone-dark sites + successor-propaganda scan."""
@@ -327,8 +432,8 @@ def actor(aid: int):
 
 
 @app.get("/api/graph")
-def graph(actor_id: int = 0):
-    return db.graph(actor_id or None)
+def graph(actor_id: int = 0, min_conf: float = 0.0):
+    return db.graph(actor_id or None, min_conf=min_conf)
 
 
 @app.get("/api/network/analysis")
@@ -459,7 +564,7 @@ def categories_ref():
     }
 
 
-RESOURCE_CATEGORIES = ("free", "resources", "hacking tools", "malware", "leaked data")
+RESOURCE_CATEGORIES = ("free", "resources", "hacking", "malware", "leaked data")
 
 
 @app.get("/api/resources")

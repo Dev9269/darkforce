@@ -28,12 +28,13 @@ export default function Breaches() {
   const [stealerText, setStealerText] = useState("");
   const [stealerSource, setStealerSource] = useState("stealer_log");
 
-  const breachesQuery = useQuery({ queryKey: ["breaches", breachSearch], queryFn: () => getBreaches(breachSearch || undefined), retry: false });
-  const pivotsQuery = useQuery({ queryKey: ["pivots"], queryFn: () => getPivots(), retry: false });
+  const breachesQuery = useQuery({ queryKey: ["breaches", breachSearch], queryFn: () => getBreaches(breachSearch || undefined), refetchInterval: 15000, retry: false });
+  const pivotsQuery = useQuery({ queryKey: ["pivots"], queryFn: () => getPivots(), refetchInterval: 15000, retry: false });
   const pivotLookupQuery = useQuery({
     queryKey: ["pivot-lookup", pivotLookup],
     queryFn: () => getPivots(pivotLookup),
     enabled: Boolean(pivotLookup),
+    refetchInterval: 15000,
     retry: false,
   });
 

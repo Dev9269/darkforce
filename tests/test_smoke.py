@@ -462,6 +462,8 @@ def test_normalize_category_maps_to_canonical():
     assert normalize_category("freebies") == "free"
     assert normalize_category("darknet news") == "news"
     assert normalize_category("webzine") == "news"
+    assert normalize_category("hacking tools") == "hacking"
+    assert "hacking tools" not in CANONICAL
     for c in CANONICAL:
         assert normalize_category(c) == c
 
@@ -530,7 +532,7 @@ def test_resources_and_news_api(monkeypatch):
     rid = db.upsert_site("http://freetools.onion", title="Free tools hub",
                          category="resources")
     cid = db.upsert_site("http://tools2.onion", title="Crackz vault",
-                         category="hacking tools")
+                         category="hacking")
     nid = db.upsert_site("http://propub3r.onion", title="ProPublica mirror",
                          category="news")
     db.save_post("editor", rid, "http://freetools.onion/t", "Grab our free keygen pack",
@@ -546,7 +548,7 @@ def test_resources_and_news_api(monkeypatch):
     assert set(urls) == {"http://tools2.onion", "http://freetools.onion"}
     assert any(r["headline"] for r in rows)
 
-    res = client.get("/api/resources?category=hacking%20tools")
+    res = client.get("/api/resources?category=hacking")
     assert [r["url"] for r in res.json()] == ["http://tools2.onion"]
 
     res = client.get("/api/news")

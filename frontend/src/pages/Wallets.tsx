@@ -24,12 +24,14 @@ export default function Wallets() {
   const listQuery = useQuery({
     queryKey: ["wallets", searchInput, kind, page],
     queryFn: () => getWallets({ q: searchInput || undefined, kind: kind || undefined, page, perPage: 50 }),
+    refetchInterval: 15000,
     retry: false,
   });
   const detailQuery = useQuery({
     queryKey: ["wallet", selected],
     queryFn: () => getWallet(selected!),
     enabled: Boolean(selected),
+    refetchInterval: 15000,
     retry: false,
   });
 
@@ -132,6 +134,12 @@ export default function Wallets() {
                 <div className="profile-name-block">
                   <div className="profile-handle mono">{detail.address}</div>
                   <div className="profile-meta">{getText(detail.kind, "?")} · {getText(detail.category, "unknown category")} · {detail.cluster?.wallets?.length ?? 0} cluster wallets</div>
+                  <div className="profile-meta mono muted-text">
+                    {detail.first_seen && `First seen ${getText(detail.first_seen)}`}
+                    {detail.last_seen && ` · Last seen ${getText(detail.last_seen)}`}
+                    {detail.posts && detail.posts.length > 0 && ` · ${detail.posts.length} post(s) referencing`}
+                    {detail.observations && detail.observations.length > 0 && ` · ${detail.observations.length} extraction(s)`}
+                  </div>
                 </div>
               </div>
               <div className="profile-columns">
@@ -177,6 +185,46 @@ export default function Wallets() {
                   </table>
                 </div>
               </div>
+              {detail.posts && detail.posts.length > 0 && (
+                <div className="profile-block">
+                  <div className="micro-label">POSTS REFERENCING THIS WALLET</div>
+                  <div className="inventory-table-wrap">
+                    <table className="inventory-table">
+                      <thead><tr><th>DATE</th><th>SITE</th><th>TITLE</th></tr></thead>
+                      <tbody>
+                        {detail.posts.slice(0, 10).map((post) => (
+                          <tr key={String(post.id)}>
+                            <td className="mono">{getText(post.ts).slice(0, 19)}</td>
+                            <td className="mono inventory-url"><a href={post.site_url} target="_blank" rel="noreferrer">{getText(post.site_url)}</a></td>
+                            <td className="inventory-detail">{getText(post.title, "—")}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              )}
+              {detail.observations && detail.observations.length > 0 && (
+                <div className="profile-block">
+                  <div className="micro-label">EXTRACTIONS (OBSERVATIONS)</div>
+                  <div className="inventory-table-wrap">
+                    <table className="inventory-table">
+                      <thead><tr><th>DATE</th><th>METHOD</th><th>KIND</th><th>SOURCE</th><th>SITE</th></tr></thead>
+                      <tbody>
+                        {detail.observations.slice(0, 10).map((obs) => (
+                          <tr key={String(obs.id)}>
+                            <td className="mono">{getText(obs.ts).slice(0, 19)}</td>
+                            <td className="mono">{getText(obs.method, "—")}</td>
+                            <td><span className="severity-dot db-dot" />{getText(obs.kind, "—")}</td>
+                            <td className="mono">{getText(obs.source_name, "—")}</td>
+                            <td className="mono inventory-url"><a href={obs.site_url} target="_blank" rel="noreferrer">{getText(obs.site_url)}</a></td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              )}
             </div>
           ) : (
             <div className="query-state"><CircleHelp size={16} /> Select a wallet above to expand its reuse cluster.</div>

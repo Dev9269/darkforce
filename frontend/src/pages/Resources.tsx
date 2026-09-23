@@ -4,7 +4,7 @@ import { ArrowLeft, Copy, LayoutGrid, Link as LinkIcon, LoaderCircle, PackageSea
 import { Link } from "react-router-dom";
 import { getResources, getText, type ResourceSite } from "@/lib/darkforce";
 
-const RESOURCE_CATS = ["free", "resources", "hacking tools", "malware", "leaked data"];
+const RESOURCE_CATS = ["free", "resources", "hacking", "malware", "leaked data"];
 
 function statusLabel(status?: string): string {
   const s = (status ?? "").toLowerCase();
@@ -18,6 +18,7 @@ export default function Resources() {
   const resourcesQuery = useQuery({
     queryKey: ["resources", category],
     queryFn: () => getResources(category || undefined),
+    refetchInterval: 15000,
     retry: false,
   });
   const rows: ResourceSite[] = Array.isArray(resourcesQuery.data) ? resourcesQuery.data : [];

@@ -126,14 +126,19 @@ def main():
               ".onion hostnames will fail to fetch; clearnet seeds will still be ingested.")
         tor = False
 
+    if args.live:
+        run_pass(db, tor)
+        from darkforce.seeds import seed_breaches
+        seed_breaches(db)
+        print("Breach catalog seeded.")
+
     if args.demo:
         from demos import seed_demo
 
         print(seed_demo.run(db))
         print("demo stats:", db.stats())
-
-    if args.live:
-        run_pass(db, tor)
+        from darkforce.seeds import seed_breaches
+        seed_breaches(db)
 
     if args.daemon:
         try:
@@ -141,10 +146,29 @@ def main():
         except ImportError:
             print("--daemon requires APScheduler: pip install apscheduler")
             sys.exit(1)
+        import os as _os
+        interval_env = _os.environ.get("DF_COLLECT_INTERVAL")
+        if interval_env:
+            try:
+                minutes = max(1, int(interval_env))
+            except ValueError:
+                minutes = max(1, args.interval)
+        else:
+            minutes = max(1, args.interval)
         sched = BackgroundScheduler(daemon=True)
-        minutes = max(1, args.interval)
+
+        def daemon_pass():
+            try:
+                totals = run_pass(db, tor, verbose=False)
+                from datetime import datetime, timezone
+                ts = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+                db.exe("INSERT OR REPLACE INTO meta(key, value) VALUES('last_collection_pass', ?)", (ts,))
+                print(f"[daemon] pass complete at {ts}: {totals}")
+            except Exception as e:
+                print(f"[daemon] pass error: {e}")
+
         sched.add_job(
-            lambda: run_pass(db, tor, verbose=False),
+            daemon_pass,
             "interval", minutes=minutes, id=f"pass-{minutes}m", max_instances=1,
             coalesce=True, misfire_grace_time=300)
         sched.start()
