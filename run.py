@@ -151,7 +151,7 @@ def crawl_one(db, url, tor=True, verbose=True):
     return r
 
 
-def main():
+def make_parser():
     ap = argparse.ArgumentParser(prog="darkforce",
                                  description="DarkForce - dark web threat actor de-anonymization platform")
     ap.add_argument("--demo", action="store_true", help="seed demo dataset before starting")
@@ -166,11 +166,27 @@ def main():
                     help="minutes between autonomous collection passes (default 15)")
     ap.add_argument("--crawl-one", metavar="URL",
                     help="fetch + ingest a single site, print the summary, then exit (debug)")
-    args = ap.parse_args()
+    ap.add_argument("--import-index", action="store_true",
+                    help="fetch Ahmia index + local harvest catalogs and register as listed (then exit)")
+    return ap
+
+
+def main():
+    args = make_parser().parse_args()
 
     from darkforce.db import DB
 
     db = DB()
+
+    if args.import_index:
+        from darkforce.config import DATA_DIR
+        from darkforce.index_loader import import_indexes, load_ahmia_index, load_local_catalogs
+        items = load_ahmia_index() + load_local_catalogs(DATA_DIR)
+        db.upsert_source("index_loader", "index", "https://ahmia.fi/onions/")
+        src = db.one("SELECT id FROM sources WHERE name='index_loader'")["id"]
+        print("[index]", import_indexes(db, items, source_id=src))
+        print("stats:", db.stats())
+        return
 
     if args.crawl_one:
         from darkforce.tor import external_running, start_managed
@@ -240,6 +256,13 @@ def main():
         stays up while we crawl. Always restores portability via seed_breaches."""
         from darkforce.seeds import seed_breaches
         try:
+            try:
+                from darkforce.index_loader import import_indexes, load_ahmia_index
+                db.upsert_source("index_loader", "index", "https://ahmia.fi/onions/")
+                src = db.one("SELECT id FROM sources WHERE name='index_loader'")["id"]
+                import_indexes(db, load_ahmia_index(), source_id=src)
+            except Exception as e:
+                print(f"[collector] index refresh failed: {e}")
             totals = run_pass(db, tor_available, verbose=False)
             seed_breaches(db)
             from datetime import datetime, timezone

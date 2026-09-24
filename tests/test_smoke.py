@@ -318,6 +318,14 @@ def test_stylo_profile_hour_feature_exists():
     assert any(k.startswith("h") and v > 0 for k, v in d.items())
 
 
+def test_run_make_parser_accepts_import_index():
+    import run as rn
+    ap = rn.make_parser()
+    ns = ap.parse_args(["--import-index"])
+    assert ns.import_index is True
+    assert ns.crawl_one is None
+
+
 # ---------- export formats ----------
 def test_export_csv():
     data, ct, fn = export([{"handle": "alice", "btc": "abc"}], "csv")
