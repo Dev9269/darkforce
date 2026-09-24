@@ -259,6 +259,16 @@ def test_descriptor_check_wired_into_crawl(sqlite_db, monkeypatch):
     assert DESCRIPTOR_ANOMALY in kinds
 
 
+def test_successor_probes_returns_candidates(sqlite_db):
+    from darkforce import seeds
+    sqlite_db.add_watchlist("SR successor", "silk road", "market")
+    sqlite_db.upsert_site("http://sr3.onion", title="Silk Road 3 - we are back", category="markets")
+    sqlite_db.upsert_site("http://other.onion", title="Random blog", category="news")
+    cands = seeds.collect_successor_probes(sqlite_db)
+    urls = [c["url"] for c in cands]
+    assert "http://sr3.onion" in urls
+
+
 # ---------- export formats ----------
 def test_export_csv():
     data, ct, fn = export([{"handle": "alice", "btc": "abc"}], "csv")

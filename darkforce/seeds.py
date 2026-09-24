@@ -613,11 +613,25 @@ def seed_breaches(db):
             pass
 
 
-def collect_successor_probes():
-    """Watchlist-backed scan for sites that announce themselves as a
-    successor / continuation of a defunct market. Returns {title,url,category}
-    candidates for ingestion (the caller links them to the old name)."""
-    return []
+def collect_successor_probes(db):
+    """Watchlist-backed scan for successors of defunct markets (C2).
+
+    Reuses db.detect_successors() to find fresh sites whose title mentions a
+    watchlist name or successor phrasing; returns them as ingestible seeds.
+    """
+    out = []
+    try:
+        res = db.detect_successors()
+    except Exception:
+        return out
+    for c in res.get("candidates", []):
+        title = c.get("title") or c.get("url") or "successor candidate"
+        url = c.get("url") or ""
+        if not url:
+            continue
+        out.append({"title": f"successor-probe: {title[:140]}", "url": url,
+                    "category": "markets", "purpose": classify_site(title, url)})
+    return out
 
 
 def collect_source(name):

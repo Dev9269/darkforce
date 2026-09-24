@@ -30,9 +30,12 @@ def run_pass(db, tor, max_sites=None, verbose=True, crawl_cap=None):
         print("[live] seeding...")
     for s in ("directory", "darkfail", "onionoo", "ahmia", "ransomware",
               "tor66", "azidal", "thedarknet", "notevil",
-              "telegram", "clearnet", "urlhaus", "resource", "news"):
+              "telegram", "clearnet", "urlhaus", "resource", "news", "successor"):
         try:
-            items = seeds.collect_source(s)
+            if s == "successor":
+                items = seeds.collect_successor_probes(db)
+            else:
+                items = seeds.collect_source(s)
             db.log_source_health(s, ok=True)
         except Exception as e:
             db.log_source_health(s, ok=False, detail=str(e))
