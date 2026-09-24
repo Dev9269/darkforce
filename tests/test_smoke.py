@@ -295,6 +295,29 @@ def test_crawl_upserts_wallets(sqlite_db, monkeypatch):
     assert any(w["kind"] == "btc" for w in rows)
 
 
+def test_stylo_hour_and_vocab_features_separate_handles(sqlite_db):
+    from darkforce import stylo
+    sid = sqlite_db.upsert_site("http://m.onion", title="M", category="onion")
+    for h, txt in (("night_owl", "buying guns paying in bitcoin only vouch"),
+                   ("night_owl", "bitcoin only buying guns vouch paying"),
+                   ("morning_duck", "recipes cooking soup pasta rice bread")):
+        for i, body in enumerate([txt, txt]):
+            sqlite_db.save_post(h, sid, f"http://m.onion/p{i}", "t", body,
+                                f"2026-01-0{1 + i}T0{i + 1 if i < 9 else 8}:00:00")
+    prof, pairs, per = stylo.match_all(sqlite_db, min_posts=2)
+    assert not any("night_owl" in m["handle"] for m in per.get("morning_duck", []))
+    assert not any("morning_duck" in m["handle"] for m in per.get("night_owl", []))
+    assert not any(("night_owl" in p and "morning_duck" in p)
+                   for pair in pairs for p in [pair[0], pair[1]])
+
+
+def test_stylo_profile_hour_feature_exists():
+    from darkforce import stylo
+    d = stylo.profile(["buying guns bitcoins vouch"], hours=["2026-01-01T03:00:00",
+                                                              "2026-01-02T03:00:00"])
+    assert any(k.startswith("h") and v > 0 for k, v in d.items())
+
+
 # ---------- export formats ----------
 def test_export_csv():
     data, ct, fn = export([{"handle": "alice", "btc": "abc"}], "csv")
