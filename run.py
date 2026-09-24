@@ -2,6 +2,7 @@ import argparse
 import os
 import sys
 import threading
+from urllib.parse import urlparse
 
 BASE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, BASE)
@@ -133,6 +134,20 @@ def run_pass(db, tor, max_sites=None, verbose=True, crawl_cap=None):
     return totals
 
 
+def crawl_one(db, url, tor=True, verbose=True):
+    """Debug hook: fetch + ingest a single site, print the summary, return it."""
+    from darkforce.collect import crawl_and_ingest
+
+    url = url.lower().strip()
+    if not url.startswith(("http://", "https://")):
+        url = "http://" + url
+    need_tor = tor and ".onion" in (urlparse(url).hostname or "")
+    r = crawl_and_ingest(db, url, use_tor=need_tor, fast=False, timeout=25)
+    if verbose:
+        print(f"[crawl-one] {url} -> {r}")
+    return r
+
+
 def main():
     ap = argparse.ArgumentParser(prog="darkforce",
                                  description="DarkForce - dark web threat actor de-anonymization platform")
@@ -146,11 +161,29 @@ def main():
                     help="run live collection passes on a schedule (requires --live or --demo)")
     ap.add_argument("--interval", type=int, default=15,
                     help="minutes between autonomous collection passes (default 15)")
+    ap.add_argument("--crawl-one", metavar="URL",
+                    help="fetch + ingest a single site, print the summary, then exit (debug)")
     args = ap.parse_args()
 
     from darkforce.db import DB
 
     db = DB()
+
+    if args.crawl_one:
+        from darkforce.tor import external_running, start_managed
+
+        if external_running():
+            print("Tor detected on 127.0.0.1:9050 - .onion sites will be crawled via existing SOCKS5.")
+            tor = True
+        elif start_managed():
+            print("Bundled Tor started (127.0.0.1:9052) - .onion sites will be crawled via SOCKS5.")
+            tor = True
+        else:
+            tor = False
+            print("WARNING: no Tor available - .onion hostnames will fail to fetch.")
+        crawl_one(db, args.crawl_one, tor=tor)
+        print("stats:", db.stats())
+        return
 
     if args.wipe:
         print("[wipe] clearing collected data tables...")

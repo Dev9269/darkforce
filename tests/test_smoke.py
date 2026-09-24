@@ -214,6 +214,21 @@ def test_collect_fallback_recovers_handle(sqlite_db, monkeypatch):
     assert any(r["handle"] == "HelloVendor" for r in rows)
 
 
+def test_crawl_one_debug_hook(sqlite_db, monkeypatch):
+    """--crawl-one must normalize the URL, route to crawl_and_ingest, and return a summary."""
+    import run as rn
+    from darkforce import detect, extract, net
+
+    snap = detect.Snap(url="http://crawlone.onion", headers={},
+                       html="<html><body>one site</body></html>", favicon=b"", meta={})
+    monkeypatch.setattr(net, "fetch_snap", lambda *a, **k: snap)
+    monkeypatch.setattr(extract, "extract_identifiers", lambda *a, **k: [])
+
+    r = rn.crawl_one(sqlite_db, "crawlone.onion", tor=False)
+    assert r["error"] is None
+    assert sqlite_db.site_id("http://crawlone.onion")
+
+
 # ---------- export formats ----------
 def test_export_csv():
     data, ct, fn = export([{"handle": "alice", "btc": "abc"}], "csv")
