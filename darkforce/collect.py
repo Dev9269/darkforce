@@ -319,6 +319,11 @@ def crawl_and_ingest(db, url, use_tor=False, timeout=20, fast=False):
                 method=f"extract:{ident['kind']}",
             )
             res["identifiers"] += 1
+            if ident["kind"] in ("btc", "xmr"):
+                try:
+                    db.upsert_wallet(ident["value"], ident["kind"], category=kw_cat)
+                except Exception as e:
+                    log("WARN {} wallet upsert {}: {}", url, ident["value"][:12], e)
     except Exception as e:
         log("WARN {} identifiers: {}", url, e)
 

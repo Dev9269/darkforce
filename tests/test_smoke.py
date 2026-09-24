@@ -269,6 +269,32 @@ def test_successor_probes_returns_candidates(sqlite_db):
     assert "http://sr3.onion" in urls
 
 
+def test_crawl_upserts_wallets(sqlite_db, monkeypatch):
+    import darkforce.collect as collect
+    from darkforce import detect, extract, net
+
+    class FakeSnap:
+        url = "http://w.onion"
+        html = ("<html><title>W</title>Vendor: cashman "
+                "wallet bc1qxy2kgdygjrsqtzq2n0yrf2493p83kkfjhx0wlh "
+                "xmr 88833y3h0FxBtxvQgQ9Wk1S3EhwJf3t3GYKRJwhW1dHbN3VtJ8BkyFHX1PzC6aL8YoFmbAHW5bTk7XgRkW8xgjM6Wf5P4kQ")
+        status = 200
+        headers = {}
+        favicon = None
+        meta = {"hostname": "w.onion", "wall": None}
+
+    monkeypatch.setattr(net, "fetch_snap", lambda *a, **k: FakeSnap())
+    monkeypatch.setattr(detect, "onionscan", lambda url: [])
+    monkeypatch.setattr(extract, "content_hash", lambda *a, **k: "h2")
+
+    r = collect.crawl_and_ingest(sqlite_db, "http://w.onion")
+    assert r["error"] is None
+    assert r["identifiers"] >= 1
+    rows, total = sqlite_db.list_wallets(q="bc1q")
+    assert total >= 1
+    assert any(w["kind"] == "btc" for w in rows)
+
+
 # ---------- export formats ----------
 def test_export_csv():
     data, ct, fn = export([{"handle": "alice", "btc": "abc"}], "csv")
