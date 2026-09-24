@@ -433,7 +433,129 @@ def actor(aid: int):
 
 @app.get("/api/graph")
 def graph(actor_id: int = 0, min_conf: float = 0.0):
-    return db.graph(actor_id or None, min_conf=min_conf)
+    g = db.graph(actor_id or None, min_conf=min_conf)
+    _annotate_graph_safety(g)
+    return g
+
+
+def _site_safety(site):
+    """Classify a DB site row into a safety record.
+
+    site: dict with keys id, url, title, category.
+    Returns dict (site_id, url, title, category, safety, threat_types,
+    severity_counts, findings_count).
+    """
+    site_id = site["id"]
+    url = site["url"] or ""
+    title = site["title"] or ""
+    category = site["category"] or "unknown"
+
+    findings = db.findings_for_site(site_id)
+    severity_counts = {"critical": 0, "high": 0, "medium": 0, "low": 0}
+    threat_types = set()
+
+    for f in findings:
+        sev = (f.get("severity") or "").lower()
+        if sev in severity_counts:
+            severity_counts[sev] += 1
+        kind = (f.get("kind") or "").lower()
+        detail = (f.get("detail") or "").lower()
+        evidence = (f.get("evidence") or "").lower()
+        text = f"{kind} {detail} {evidence}"
+
+        if any(k in text for k in ["ransomware", "ransom", "encrypt", "decrypt"]):
+            threat_types.add("ransomware")
+        if any(k in text for k in ["malware", "trojan", "virus", "backdoor", "rat", "stealer", "botnet", "c2", "command and control"]):
+            threat_types.add("malware")
+        if any(k in text for k in ["phishing", "credential harvest", "fake login", "spoof"]):
+            threat_types.add("phishing")
+        if any(k in text for k in ["exploit", "vulnerability", "rce", "injection", "xss", "sqli"]):
+            threat_types.add("exploit")
+
+    if "ransomware" in threat_types:
+        safety = "ransomware"
+    elif "malware" in threat_types:
+        safety = "malware"
+    elif "phishing" in threat_types:
+        safety = "phishing"
+    elif severity_counts["critical"] > 0 or severity_counts["high"] > 2:
+        safety = "malicious"
+    elif severity_counts["high"] > 0 or severity_counts["medium"] > 3:
+        safety = "suspicious"
+    elif severity_counts["medium"] > 0 or severity_counts["low"] > 5:
+        safety = "suspicious"
+    else:
+        cat = (category or "").lower()
+        if cat in ["ransomware", "malware", "hitman", "fraud/scam", "counterfeit", "weapons", "leaked data"]:
+            safety = "suspicious"
+        elif cat in ["news", "directories", "forums", "resources", "free", "privacy/hosting"]:
+            safety = "safe"
+        else:
+            safety = "unknown"
+
+    return {
+        "site_id": site_id,
+        "url": url,
+        "title": title,
+        "category": category,
+        "safety": safety,
+        "threat_types": list(threat_types),
+        "severity_counts": severity_counts,
+        "findings_count": len(findings),
+    }
+
+
+def _annotate_graph_safety(g, min_prefix=12):
+    """Attach safety info to site/onion nodes in a graph payload.
+
+    db.graph truncates node labels (26 chars) and ids (18 chars), so match
+    sites by exact URL first, then by shared prefix.
+    """
+    try:
+        site_rows = db.q("SELECT id, url, title, category FROM sites")
+        by_url = {s["url"]: s for s in site_rows}
+        urls = [s["url"] for s in site_rows]
+
+        for n in g.get("nodes", []):
+            if n.get("kind") not in ("site", "onion"):
+                continue
+            label = (n.get("label") or "").strip()
+            nid = n.get("id") or ""
+            nid = nid.replace("site:", "", 1).replace("onion:", "", 1)
+
+            site_row = by_url.get(label) or by_url.get(nid)
+            if site_row is None:
+                for u in urls:
+                    if len(label) >= min_prefix and u.startswith(label):
+                        site_row = by_url[u]
+                        break
+            if site_row is None and len(nid) >= min_prefix:
+                for u in urls:
+                    if u.startswith(nid):
+                        site_row = by_url[u]
+                        break
+            if site_row is None:
+                n.setdefault("safety", "unknown")
+                continue
+            n["safety"] = _site_safety(site_row)["safety"]
+    except Exception as e:
+        print(f"Error annotating graph safety: {e}")
+
+
+@app.get("/api/sites/safety")
+def sites_safety():
+    """Get safety status for all sites (malicious/ransomware/malware/phishing/safe)."""
+    try:
+        results = {}
+        for site in db.q("SELECT id, url, title, category FROM sites"):
+            rec = _site_safety(site)
+            results[str(rec["site_id"])] = rec
+        return results
+    except Exception as e:
+        import traceback
+        print(f"Error in sites_safety: {e}")
+        traceback.print_exc()
+        return {"error": str(e)}
 
 
 @app.get("/api/network/analysis")
@@ -970,7 +1092,7 @@ class SpaStaticFiles(StaticFiles):
         try:
             return await super().get_response(path, scope)
         except StarletteHTTPException as e:
-            if e.status_code != 404 or path.startswith("api/"):
+            if e.status_code != 404 or path.startswith("/api/"):
                 raise
             index = os.path.join(WEB_DIR, "index.html")
             if os.path.exists(index):

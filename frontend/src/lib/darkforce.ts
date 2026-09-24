@@ -414,8 +414,12 @@ export const getSearch = (q: string, kind: string, category?: string) =>
       (category ? `&category=${encodeURIComponent(category)}` : ""),
   );
 export const getActor = (actorId: string | number) => apiGet<Actor>(`/actor/${encodeURIComponent(String(actorId))}`);
-export const getGraph = (actorId: string) =>
-  apiGet<GraphResponse>(`/graph?actor_id=${encodeURIComponent(actorId)}`);
+export const getGraph = (actorId: string, minConf?: number) => {
+  const params = new URLSearchParams();
+  if (actorId) params.set("actor_id", actorId);
+  if (minConf !== undefined) params.set("min_conf", String(minConf));
+  return apiGet<GraphResponse>(`/graph?${params.toString()}`);
+};
 export const getMisconfigs = () => apiGet<Finding[] | { findings?: Finding[] }>("/misconfigs");
 export const getFindings = (siteId: string) => apiGet<Finding[]>(`/findings/${encodeURIComponent(siteId)}`);
 export const getStylo = (handle: string) => apiGet<StyloResult | StyloResult[]>(`/stylo/${encodeURIComponent(handle)}`);

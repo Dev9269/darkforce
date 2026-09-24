@@ -2,8 +2,11 @@ import { fileURLToPath, URL } from "node:url";
 
 import { defineConfig } from "vite";
 
+const isDev = process.env.NODE_ENV === "development";
+
 // The FastAPI server mounts this build at "/" (darkforce/api.py: app.mount("/", StaticFiles(web))),
 // so the base is "/" and every /api/* fetch is same-origin. No proxy, no CORS at runtime.
+// In development, proxy /api to the FastAPI dev server.
 export default defineConfig({
   resolve: {
     alias: {
@@ -23,4 +26,12 @@ export default defineConfig({
     // Keep paths absolute so static serving works at "/" from the FastAPI mount.
     base: "/",
   },
+  server: isDev ? {
+    proxy: {
+      "/api": {
+        target: "http://localhost:8000",
+        changeOrigin: true,
+      },
+    },
+  } : undefined,
 });

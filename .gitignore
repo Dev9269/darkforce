@@ -29,5 +29,9 @@ data/harvest_*.log
 data/harvest_logs/
 data/_start_*.bat
 data/*.log
+data/*.db-shm
+data/*.db-wal
 _sample.py
 data/raw/
+server-out.log
+server-err.log
