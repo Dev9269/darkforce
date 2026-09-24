@@ -172,7 +172,7 @@ def test_crawl_and_ingest_correlates_against_index(clearnet_db, monkeypatch):
         "clearnet-a.example", title="A Mirror",
         favicon_hash=FAVICON_SHA, content_hash=ONION_HTML_SHA, server="nginx")
 
-    def fake_fetch(url, use_tor=False, timeout=20):
+    def fake_fetch(url, use_tor=False, timeout=20, fast=False):
         return detect.Snap(url="http://swap.onion", headers={"Server": "nginx"},
                            html=ONION_HTML, favicon=FAVICON,
                            meta={"hostname": "swap.onion"})

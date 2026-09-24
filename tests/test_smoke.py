@@ -143,6 +143,41 @@ def test_dedup_marker():
     assert db.site_last_scan("http://stale.onion") is not None
 
 
+def test_upsert_site_default_last_scan_null(sqlite_db):
+    sqlite_db.upsert_site("http://a.onion", title="A", category="onion")
+    row = sqlite_db.one("SELECT last_scan, first_seen FROM sites WHERE url='http://a.onion'")
+    assert row["first_seen"] is not None
+    assert row["last_scan"] is None  # not yet crawled
+    sqlite_db.upsert_site("http://a.onion", title="A", category="onion", last_scan="2026-01-01T00:00:00Z")
+    row2 = sqlite_db.one("SELECT last_scan FROM sites WHERE url='http://a.onion'")
+    assert row2["last_scan"] == "2026-01-01T00:00:00Z"
+
+
+def test_run_pass_crawls_newly_seeded(monkeypatch):
+    """Regression: seeded sites must be crawl-eligible, not skipped as pre-scanned."""
+    from darkforce import collect
+
+    db = SQLiteDB(_db_path())
+    seen = []
+
+    def fake_cai(_db, url, use_tor=False, timeout=20, fast=False):
+        seen.append(url)
+        return {"url": url, "error": None, "skipped": None, "findings": 0,
+                "identifiers": 0, "posts": 0, "handles": 0}
+
+    monkeypatch.setattr(collect, "crawl_and_ingest", fake_cai)
+
+    import darkforce.seeds as seeds
+    def fake_collect(name):
+        return [{"title": "x", "url": "http://fresh.onion", "category": "onion"}]
+    monkeypatch.setattr(seeds, "collect_source", fake_collect)
+
+    import run as rn
+    totals = rn.run_pass(db, tor=True, max_sites=5, crawl_cap=5)
+    assert "http://fresh.onion" in seen
+    assert totals["sites"] >= 1
+
+
 # ---------- export formats ----------
 def test_export_csv():
     data, ct, fn = export([{"handle": "alice", "btc": "abc"}], "csv")

@@ -360,7 +360,7 @@ class BaseDB:
         if kw.get("category"):
             kw["category"] = categories.normalize_category(kw["category"])
         kw.setdefault("first_seen", utcnow())
-        kw.setdefault("last_scan", utcnow())
+        kw.setdefault("last_scan", None)  # not crawled until crawl_and_ingest marks it
         cols = list(kw.keys())
         updates = ", ".join(
             f"{name}=excluded.{name}" if name not in ("first_seen",) else f"first_seen=excluded.first_seen"
