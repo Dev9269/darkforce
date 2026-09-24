@@ -229,6 +229,36 @@ def test_crawl_one_debug_hook(sqlite_db, monkeypatch):
     assert sqlite_db.site_id("http://crawlone.onion")
 
 
+def test_descriptor_check_wired_into_crawl(sqlite_db, monkeypatch):
+    """Crawl must route Onionoo descriptor anomalies into findings for .onion sites."""
+    from darkforce import detect, extract, net
+    from darkforce import descriptors as desc_mod
+    from darkforce.descriptors import DESCRIPTOR_ANOMALY
+
+    snap = detect.Snap(url="http://anon.onion", headers={},
+                       html="<html><body>x</body></html>", favicon=b"", meta={})
+    monkeypatch.setattr(net, "fetch_snap", lambda *a, **k: snap)
+    monkeypatch.setattr(extract, "extract_identifiers", lambda *a, **k: [])
+    monkeypatch.setattr(detect, "onionscan", lambda *a, **k: [])
+
+    captured = {}
+
+    def fake_descriptor(address, observed=None, timeout=15):
+        captured["address"] = address
+        captured["observed"] = observed
+        return [(DESCRIPTOR_ANOMALY, "high", f"{address}: port mismatch", 0.7)]
+
+    monkeypatch.setattr(desc_mod, "check_onion_descriptor", fake_descriptor)
+
+    from darkforce import collect as collect_mod
+    res = collect_mod.crawl_and_ingest(sqlite_db, "http://anon.onion")
+    assert res["error"] is None
+    assert captured.get("address") == "anon.onion"
+    assert res["findings"] >= 1
+    kinds = {r["kind"] for r in sqlite_db.q("SELECT kind FROM findings")}
+    assert DESCRIPTOR_ANOMALY in kinds
+
+
 # ---------- export formats ----------
 def test_export_csv():
     data, ct, fn = export([{"handle": "alice", "btc": "abc"}], "csv")

@@ -280,6 +280,22 @@ def crawl_and_ingest(db, url, use_tor=False, timeout=20, fast=False):
         except Exception as e:
             log("WARN {} onionscan: {}", url, e)
 
+    if host.endswith(".onion"):
+        try:
+            st = db.one("SELECT status FROM sites WHERE url=?", (url,)) or {}
+            if (st.get("status") or "") not in ("blocked_captcha", "blocked_blocked"):
+                from .descriptors import check_onion_descriptor
+                observed = {"alive": True, "ports": [], "version": ""}
+                dcf = check_onion_descriptor(host, observed=observed, timeout=15)
+                if dcf:
+                    detect.pipeline_findings(site_id, db, dcf, {},
+                                             url=url, source_id=_site_source(db, site_id),
+                                             method="descriptor:onionoo")
+                    res["findings"] += len(dcf)
+                    log("DESCRIPTOR {} -> {} anomaly finding(s)", url, len(dcf))
+        except Exception as e:
+            log("WARN {} descriptor check: {}", url, e)
+
     handles = _page_handles(BeautifulSoup(snap.html, "html.parser"), url, html=snap.html)
 
     for h in handles:
