@@ -178,6 +178,42 @@ def test_run_pass_crawls_newly_seeded(monkeypatch):
     assert totals["sites"] >= 1
 
 
+def test_extract_page_handles_selector_free():
+    from darkforce import extract
+    text = (
+        "DM us: @HellasVendor and @AlphaBay\n"
+        "keybase.io/kingpin\n"
+        "ICQ 555123456\n"
+        "mail => dexter@riseup.net\n"
+    )
+    handles = extract.extract_page_handles(text)
+    by_kind = {h["kind"]: h["value"] for h in handles}
+    tg = sorted({h["value"] for h in handles if h["kind"] == "telegram"})
+    assert tg == ["AlphaBay", "HellasVendor"]
+    assert by_kind["icq"] == "555123456"
+    assert by_kind["keybase"] == "kingpin"
+
+
+def test_collect_fallback_recovers_handle(sqlite_db, monkeypatch):
+    """When page selectors find no author, raw-text handle extraction must recover one."""
+    from darkforce import detect, extract, net
+
+    snap = detect.Snap(url="http://hello.onion",
+                       headers={},
+                       html="<html><body><p>Contact us: @HelloVendor on Telegram.</p></body></html>",
+                       favicon=b"",
+                       meta={})
+    monkeypatch.setattr(net, "fetch_snap", lambda *a, **k: snap)
+    monkeypatch.setattr(extract, "extract_identifiers", lambda *a, **k: [])
+
+    from darkforce import collect
+    res = collect.crawl_and_ingest(sqlite_db, "http://hello.onion")
+    assert res["error"] is None
+    rows = sqlite_db.q("SELECT h.handle FROM handles h "
+                       "JOIN sites s ON h.site_id=s.id WHERE s.url='http://hello.onion'")
+    assert any(r["handle"] == "HelloVendor" for r in rows)
+
+
 # ---------- export formats ----------
 def test_export_csv():
     data, ct, fn = export([{"handle": "alice", "btc": "abc"}], "csv")

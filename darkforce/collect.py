@@ -119,8 +119,9 @@ def _page_title(soup, url):
     return (urlparse(url).hostname or url)[:200]
 
 
-def _page_handles(soup, url):
-    """Distinct author handles detectable on the page; falls back to hostname prefix."""
+def _page_handles(soup, url, html=""):
+    """Distinct author handles detectable on the page; falls back to hostname
+    prefix, then to selector-free regex extraction over raw html."""
     found = []
     seen = set()
     for sel in AUTHOR_SELECTORS:
@@ -141,6 +142,14 @@ def _page_handles(soup, url):
             break
     if found:
         return found
+    if html:
+        for m in extract.extract_page_handles(html):
+            h = _clean_handle(m["value"])
+            if h and len(h) >= 3 and h.lower() not in seen:
+                seen.add(h.lower())
+                found.append(h)
+        if found:
+            return found
     h = _host_handle(url)
     return [h] if h else []
 
@@ -271,7 +280,7 @@ def crawl_and_ingest(db, url, use_tor=False, timeout=20, fast=False):
         except Exception as e:
             log("WARN {} onionscan: {}", url, e)
 
-    handles = _page_handles(BeautifulSoup(snap.html, "html.parser"), url)
+    handles = _page_handles(BeautifulSoup(snap.html, "html.parser"), url, html=snap.html)
 
     for h in handles:
         try:
