@@ -326,6 +326,21 @@ def test_run_make_parser_accepts_import_index():
     assert ns.crawl_one is None
 
 
+def test_sites_needing_rescan_and_parser(sqlite_db):
+    import run as rn
+    from darkforce.db import utcnow
+    sqlite_db.upsert_site("http://new.onion", title="N", category="onion")  # last_scan None
+    sqlite_db.upsert_site("http://old.onion", title="O", category="onion",
+                          last_scan="2019-01-01T00:00:00Z")
+    sqlite_db.upsert_site("http://fresh.onion", title="F", category="onion",
+                          last_scan=utcnow())
+    need = {r["url"] for r in sqlite_db.sites_needing_rescan(days=7)}
+    assert "http://new.onion" in need and "http://old.onion" in need
+    assert "http://fresh.onion" not in need
+    ap = rn.make_parser()
+    assert ap.parse_args(["--sweep"]).sweep is True
+
+
 # ---------- export formats ----------
 def test_export_csv():
     data, ct, fn = export([{"handle": "alice", "btc": "abc"}], "csv")

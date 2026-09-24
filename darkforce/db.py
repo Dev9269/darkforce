@@ -857,6 +857,13 @@ class BaseDB:
             "WHERE content_hash IS NOT NULL AND status='down' "
             "AND last_scan >= ? ORDER BY last_scan DESC LIMIT 100", (days_ago(days),))]
 
+    def sites_needing_rescan(self, days=7):
+        """Sites whose last_scan is missing or older than `days` (rolling sweep)."""
+        cutoff = days_ago(days)
+        return [dict(r) for r in self.q(
+            "SELECT url FROM sites WHERE last_scan IS NULL OR last_scan < ? "
+            "ORDER BY last_scan ASC NULLS FIRST LIMIT 500", (cutoff,))]
+
     def detect_successors(self, freshness_hours=720):
         """Successor-propaganda detection: new sites whose digest mentions a
         defunct market or matches a watchlist name. Raises successor_suspected

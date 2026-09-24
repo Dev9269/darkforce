@@ -64,11 +64,21 @@ def run_pass(db, tor, max_sites=None, verbose=True, crawl_cap=None):
                 print(f"[live] hit cap of {max_sites} new sites, stopping seed phase")
             break
 
+    sweep_days = int(os.environ.get("DF_SWEEP_DAYS", "7"))
+    if sweep_days > 0:
+        sweep_urls = db.sites_needing_rescan(sweep_days)
+        before = len(new_urls)
+        new_urls = list(dict.fromkeys(new_urls + [r["url"] for r in sweep_urls]))
+        added = len(new_urls) - before
+        if verbose:
+            print(f"[live] rolling sweep: +{added} stale site(s) into crawl pool (DF_SWEEP_DAYS={sweep_days})")
+
     crawlable = [u for u in new_urls if tor or ".onion" not in (urlparse(u).hostname or "")]
     if verbose and len(new_urls) - len(crawlable):
         print(f"[live] Tor unavailable - skipping {len(new_urls) - len(crawlable)} .onion seed(s), "
               f"crawling {len(crawlable)} clearnet site(s)")
 
+    crawler_stop = threading.Event()
     crawl_cap = crawl_cap if crawl_cap is not None else DEFAULT_CRAWL_CAP
     crawled_this_pass = []
     for u in crawlable:
@@ -79,7 +89,9 @@ def run_pass(db, tor, max_sites=None, verbose=True, crawl_cap=None):
         try:
             src = db.one("SELECT last_scan FROM sites WHERE url=?", (u,))
             if src and src.get("last_scan"):
-                continue
+                from darkforce.db import days_ago
+                if src["last_scan"] >= days_ago(sweep_days or 7):
+                    continue  # scanned recently enough; skip
         except Exception:
             pass
         crawled_this_pass.append(u)
@@ -168,6 +180,8 @@ def make_parser():
                     help="fetch + ingest a single site, print the summary, then exit (debug)")
     ap.add_argument("--import-index", action="store_true",
                     help="fetch Ahmia index + local harvest catalogs and register as listed (then exit)")
+    ap.add_argument("--sweep", action="store_true",
+                    help="run one rolling liveness sweep (re-crawl stale sites), then exit")
     return ap
 
 
@@ -201,6 +215,19 @@ def main():
             tor = False
             print("WARNING: no Tor available - .onion hostnames will fail to fetch.")
         crawl_one(db, args.crawl_one, tor=tor)
+        print("stats:", db.stats())
+        return
+
+    if args.sweep:
+        from darkforce.seeds import seed_breaches
+        from darkforce.tor import external_running, start_managed
+
+        seed_breaches(db)
+        tor_sweep = external_running() or start_managed()
+        if not tor_sweep:
+            print("WARNING: no Tor available - only clearnet sites will be re-scanned in the sweep.")
+        r = run_pass(db, tor_sweep, verbose=True)
+        print("[sweep] complete:", r)
         print("stats:", db.stats())
         return
 
