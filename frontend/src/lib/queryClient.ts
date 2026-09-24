@@ -1,6 +1,5 @@
 import { QueryClient } from "@tanstack/react-query";
 
-// Exported so lib/session can wipe it at session boundaries — cached data outlives logout.
 // Defaults: data stays fresh for 60s and is NOT auto-refetched on window focus /
 // reconnect, so page remounts and tab switches don't burst ~10 requests at once.
 export const queryClient = new QueryClient({

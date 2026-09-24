@@ -1,11 +1,11 @@
 import { useState, useEffect, useCallback } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { AlertTriangle, ArrowLeft, LoaderCircle, Layers, Network, SlidersHorizontal, ZoomIn, ZoomOut, RotateCcw, Maximize2, Minimize2, Tags, Filter, Search, Users, Globe, Shield, Database, Download, Minimize2 as Minimize2Icon, Maximize2 as Maximize2Icon, Copy, Check, X } from "lucide-react";
-import { Link } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import GraphCanvas, { type GraphApi, type GraphFilters } from "@/components/GraphCanvas";
-import { getGraph, getCategories, getText, type GraphNode } from "@/lib/darkforce";
+import { getGraph, getCategories, getText, clampConfidence, type GraphNode } from "@/lib/darkforce";
 
 const SAFETY_COLORS: Record<string, string> = {
   safe: "#22c55e",
@@ -34,7 +34,9 @@ const ENTITY_TYPES = [
 ];
 
 export default function GraphPage() {
-  const [minConf, setMinConf] = useState(0.6);
+  const [searchParams] = useSearchParams();
+  const initialConf = clampConfidence(Number.parseFloat(searchParams.get("min_conf") ?? ""));
+  const [minConf, setMinConf] = useState(Number.isNaN(initialConf) ? 0.6 : initialConf);
   const [searchQuery, setSearchQuery] = useState("");
   const [excludedTypes, setExcludedTypes] = useState<string[]>([]);
   const [excludedCategories, setExcludedCategories] = useState<string[]>([]);

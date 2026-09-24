@@ -52,7 +52,7 @@ export default function News() {
           </div>
         </section>
         {newsQuery.isLoading ? (
-          <div className="query-state"><LoaderCircle className="spin" size={16} /> Pulling latest darknet headlines…</div>
+          <div className="query-state"><LoaderCircle className="animate-spin" size={16} /> Pulling latest darknet headlines…</div>
         ) : items.length === 0 ? (
           <div className="query-state" data-testid="news-empty">
             No darknet headlines yet. The collector is scanning the news seed sites on its next passes.

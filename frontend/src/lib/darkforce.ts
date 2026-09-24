@@ -366,6 +366,21 @@ export const getSiteCatalog = (options?: { category?: string; q?: string; page?:
 export const getCategories = () => apiGet<CategoriesResponse>("/categories");
 export const getAlerts = () => apiGet<LiveAlert[]>("/alerts");
 
+export interface SiteSafety {
+  site_id?: number | string;
+  url?: string;
+  title?: string;
+  category?: string;
+  safety?: string;
+  threat_types?: string[];
+  severity_counts?: { critical?: number; high?: number; medium?: number; low?: number };
+  findings_count?: number;
+  [key: string]: unknown;
+}
+
+export const getSitesSafety = () =>
+  apiGet<Record<string, SiteSafety>>("/sites/safety");
+
 export interface ResourceSite {
   id?: string | number;
   url?: string;
@@ -457,8 +472,6 @@ export const getWallets = (options?: { q?: string; kind?: string; page?: number;
       (options?.kind ? `&kind=${encodeURIComponent(options.kind)}` : ""),
   );
 export const getWallet = (address: string) => apiGet<WalletDetail>(`/wallets/${encodeURIComponent(address)}`);
-export const getWalletCluster = (address: string) =>
-  apiGet<WalletCluster>(`/clusters/${encodeURIComponent(address)}`);
 export const getBreaches = (q?: string) => apiGet<Breach[]>(`/breaches${q ? `?q=${encodeURIComponent(q)}` : ""}`);
 export const getPivots = (value?: string) => apiGet<PivotRow[] | PivotResult>(`/pivots${value ? `?value=${encodeURIComponent(value)}` : ""}`);
 export const importStealer = (text: string, source: string) =>

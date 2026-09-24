@@ -151,7 +151,7 @@ export default function Analyst() {
         {metric(net?.n_nodes, "NODES")}
         {metric(net?.n_edges, "EDGES")}
         {metric(net?.n_communities, "COMMUNITIES")}
-        {metric(getText(sum, 0), "NETWORK DENSITY (0 to 1)")}
+        {metric(Number((sum as { density?: number })?.density ?? 0), "NETWORK DENSITY (0 to 1)")}
       </section>
 
       <section className="console-panel graph-panel" data-testid="analyst-graph-panel">

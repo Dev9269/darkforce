@@ -1,12 +1,16 @@
 import argparse
 import os
 import sys
+import threading
 
 BASE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, BASE)
 
+DEFAULT_MAX_SITES = int(os.environ.get("DF_MAX_SITES", "5000"))
+DEFAULT_CRAWL_CAP = int(os.environ.get("DF_CRAWL_CAP", "40"))
 
-def run_pass(db, tor, max_sites=30, verbose=True):
+
+def run_pass(db, tor, max_sites=None, verbose=True, crawl_cap=None):
     """One full collection pass: seed -> crawl -> stylometry merge.
     Returns a summary dict. Safe to call repeatedly (dedup skips unchanged pages)."""
     from darkforce import categories as _cats
@@ -18,6 +22,8 @@ def run_pass(db, tor, max_sites=30, verbose=True):
     new_urls = []
     totals = {"findings": 0, "identifiers": 0, "posts": 0,
               "handles": 0, "sites": 0, "failed": 0, "skipped": 0}
+
+    max_sites = max_sites or DEFAULT_MAX_SITES
 
     if verbose:
         print("[live] seeding...")
@@ -59,22 +65,62 @@ def run_pass(db, tor, max_sites=30, verbose=True):
         print(f"[live] Tor unavailable - skipping {len(new_urls) - len(crawlable)} .onion seed(s), "
               f"crawling {len(crawlable)} clearnet site(s)")
 
+    crawl_cap = crawl_cap if crawl_cap is not None else DEFAULT_CRAWL_CAP
+    crawled_this_pass = []
+    for u in crawlable:
+        if len(crawled_this_pass) >= crawl_cap:
+            if verbose:
+                print(f"[live] crawl cap {crawl_cap} reached this pass; remaining deferred to next pass")
+            break
+        try:
+            src = db.one("SELECT last_scan FROM sites WHERE url=?", (u,))
+            if src and src.get("last_scan"):
+                continue
+        except Exception:
+            pass
+        crawled_this_pass.append(u)
+
+    n_crawl = len(crawled_this_pass)
     if verbose:
-        print(f"[live] crawling {len(crawlable)} new site(s)...")
-    for i, url in enumerate(crawlable, 1):
-        needs_tor = ".onion" in (urlparse(url).hostname or "") and tor
-        r = crawl_and_ingest(db, url, use_tor=needs_tor)
-        if r.get("skipped"):
-            totals["skipped"] += 1
-        if r["error"]:
-            totals["failed"] += 1
-        for k in ("findings", "identifiers", "posts", "handles"):
-            totals[k] += r[k]
-        if verbose and (r["error"] or r["skipped"] or r["findings"] or r["identifiers"] or r["posts"] or r["handles"]):
-            extra = (f"  ({r['error']})" if r["error"] else "") or (f"  (skipped: {r['skipped']})" if r["skipped"] else "")
-            print(f"  [{i}/{len(crawlable)}] {url} -> findings={r['findings']} "
-                  f"ids={r['identifiers']} posts={r['posts']} handles={r['handles']}{extra}")
-        time.sleep(1.5)
+        print(f"[live] crawling {n_crawl} new site(s) (cap {crawl_cap})...")
+    fast = bool(os.environ.get("DF_FAST_CRAWL", "1"))
+    if fast and n_crawl > 1:
+        from concurrent.futures import ThreadPoolExecutor
+        from darkforce.collect import crawl_and_ingest as _cai
+        with ThreadPoolExecutor(max_workers=DEFAULT_CRAWL_CAP) as pool:
+            futures = {pool.submit(_cai, db, url, use_tor=(tor and ".onion" in (urlparse(url).hostname or "")), timeout=20, fast=True): url for url in crawled_this_pass}
+            for i, fut in enumerate(futures, 1):
+                url = futures[fut]
+                try:
+                    r = fut.result()
+                except Exception as e:
+                    r = {"error": str(e)}
+                if r.get("skipped"):
+                    totals["skipped"] += 1
+                if r["error"]:
+                    totals["failed"] += 1
+                for k in ("findings", "identifiers", "posts", "handles"):
+                    totals[k] += r[k]
+                if verbose and (r["error"] or r["skipped"] or r["findings"] or r["identifiers"] or r["posts"] or r["handles"]):
+                    extra = (f"  ({r['error']})" if r["error"] else "") or (f"  (skipped: {r['skipped']})" if r["skipped"] else "")
+                    print(f"  [{i}/{n_crawl}] {url} -> findings={r['findings']} "
+                          f"ids={r['identifiers']} posts={r['posts']} handles={r['handles']}{extra}")
+        time.sleep(2)
+    else:
+        for i, url in enumerate(crawled_this_pass, 1):
+            needs_tor = ".onion" in (urlparse(url).hostname or "") and tor
+            r = crawl_and_ingest(db, url, use_tor=needs_tor, fast=fast)
+            if r.get("skipped"):
+                totals["skipped"] += 1
+            if r["error"]:
+                totals["failed"] += 1
+            for k in ("findings", "identifiers", "posts", "handles"):
+                totals[k] += r[k]
+            if verbose and (r["error"] or r["skipped"] or r["findings"] or r["identifiers"] or r["posts"] or r["handles"]):
+                extra = (f"  ({r['error']})" if r["error"] else "") or (f"  (skipped: {r['skipped']})" if r["skipped"] else "")
+                print(f"  [{i}/{n_crawl}] {url} -> findings={r['findings']} "
+                      f"ids={r['identifiers']} posts={r['posts']} handles={r['handles']}{extra}")
+            time.sleep(1.5)
 
     if verbose:
         print("[live] merging handles into actors (stylometry + shared identifiers)...")
@@ -92,6 +138,8 @@ def main():
                                  description="DarkForce - dark web threat actor de-anonymization platform")
     ap.add_argument("--demo", action="store_true", help="seed demo dataset before starting")
     ap.add_argument("--live", action="store_true", help="pull live seeds from clearnet APIs before starting")
+    ap.add_argument("--wipe", action="store_true",
+                    help="delete all collected data (sites/actors/posts/findings/alerts) before starting")
     ap.add_argument("--port", type=int, default=8000)
     ap.add_argument("--refresh", action="store_true", help="re-run graph/stylometry merge, then exit")
     ap.add_argument("--daemon", action="store_true",
@@ -103,6 +151,18 @@ def main():
     from darkforce.db import DB
 
     db = DB()
+
+    if args.wipe:
+        print("[wipe] clearing collected data tables...")
+        for t in ("links", "findings", "identifiers", "posts", "handles",
+                  "actors", "sites", "alerts", "observations", "link_evidence",
+                  "collector_health", "sources", "clearnet_fingerprints"):
+            try:
+                db.exe(f"DELETE FROM {t}")
+            except Exception as e:
+                print(f"[wipe] {t}: {e}")
+        db.exe("DELETE FROM meta WHERE key IN ('last_collection_pass')")
+        print("[wipe] data cleared")
 
     if args.refresh:
         from darkforce import link, stylo
@@ -126,19 +186,48 @@ def main():
               ".onion hostnames will fail to fetch; clearnet seeds will still be ingested.")
         tor = False
 
-    if args.live:
-        run_pass(db, tor)
-        from darkforce.seeds import seed_breaches
-        seed_breaches(db)
-        print("Breach catalog seeded.")
-
     if args.demo:
         from demos import seed_demo
 
         print(seed_demo.run(db))
         print("demo stats:", db.stats())
+
+    if args.live or args.daemon:
         from darkforce.seeds import seed_breaches
+
         seed_breaches(db)
+
+    _collector_stop = threading.Event()
+
+    def _run_live_pass(tor_available):
+        """Blocking collection pass; called from background thread so the API
+        stays up while we crawl. Always restores portability via seed_breaches."""
+        from darkforce.seeds import seed_breaches
+        try:
+            totals = run_pass(db, tor_available, verbose=False)
+            seed_breaches(db)
+            from datetime import datetime, timezone
+            ts = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+            db.exe("INSERT OR REPLACE INTO meta(key, value) VALUES('last_collection_pass', ?)", (ts,))
+            return totals
+        except Exception as e:
+            print(f"[collector] pass error: {e}")
+            return {}
+
+    def _latest_actor_count():
+        return db.one("SELECT COUNT(*) c FROM actors")["c"]
+
+    def _initial_pass(tor_available):
+        before = _latest_actor_count()
+        print("[collector] first live pass starting (this populates real .onion sites)...")
+        totals = _run_live_pass(tor_available)
+        print(f"[collector] first live pass complete: {totals}")
+        if _latest_actor_count() > before:
+            print(f"[collector] actors now {before} -> {_latest_actor_count()}")
+
+    if args.live or args.daemon:
+        t = threading.Thread(target=_initial_pass, args=(tor,), name="collector-initial", daemon=True)
+        t.start()
 
     if args.daemon:
         try:
@@ -159,11 +248,8 @@ def main():
 
         def daemon_pass():
             try:
-                totals = run_pass(db, tor, verbose=False)
-                from datetime import datetime, timezone
-                ts = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
-                db.exe("INSERT OR REPLACE INTO meta(key, value) VALUES('last_collection_pass', ?)", (ts,))
-                print(f"[daemon] pass complete at {ts}: {totals}")
+                totals = _run_live_pass(tor)
+                print(f"[daemon] pass complete at {datetime.now(timezone.utc).isoformat().replace('+00:00', 'Z')}: {totals}")
             except Exception as e:
                 print(f"[daemon] pass error: {e}")
 

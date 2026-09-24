@@ -51,7 +51,7 @@ export default function Resources() {
           </div>
         </section>
         {resourcesQuery.isLoading ? (
-          <div className="query-state"><LoaderCircle className="spin" size={16} /> Scanning resource catalog…</div>
+          <div className="query-state"><LoaderCircle className="animate-spin" size={16} /> Scanning resource catalog…</div>
         ) : rows.length === 0 ? (
           <div className="query-state" data-testid="resources-empty">
             No resource sites indexed yet. The collector is probing the resource seed list on its next passes.

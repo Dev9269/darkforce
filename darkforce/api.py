@@ -536,8 +536,10 @@ def _annotate_graph_safety(g, min_prefix=12):
                         break
             if site_row is None:
                 n.setdefault("safety", "unknown")
+                n.setdefault("category", "unknown")
                 continue
             n["safety"] = _site_safety(site_row)["safety"]
+            n["category"] = site_row.get("category") or "unknown"
     except Exception as e:
         print(f"Error annotating graph safety: {e}")
 

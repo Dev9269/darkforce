@@ -1,14 +1,36 @@
 import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { Globe2, Search, LayoutGrid, ArrowLeft, AlertTriangle, CircleHelp, LoaderCircle, Network } from "lucide-react";
+import { Globe2, Search, LayoutGrid, ArrowLeft, AlertTriangle, CircleHelp, LoaderCircle, Network, ShieldAlert, ShieldCheck, CircleX } from "lucide-react";
 import { Link } from "react-router-dom";
-import { getCategories, getSiteCatalog, getText, type JsonRecord } from "@/lib/darkforce";
+import { getCategories, getSiteCatalog, getSitesSafety, getText, type JsonRecord, type SiteSafety } from "@/lib/darkforce";
 
 const PER_PAGE = 100;
 
 function purposeBadge(purpose?: string) {
   const danger = ["drugs", "weapons", "hitman", "porn", "child", "cp", "leaked data"].some((k) => purpose?.includes(k));
   return <span className={`purpose-tag ${danger ? "purpose-danger" : "purpose-ok"}`}>{purpose ?? "unknown"}</span>;
+}
+
+const SAFETY_LABEL: Record<string, string> = {
+  safe: "SAFE",
+  suspicious: "SUSPICIOUS",
+  malicious: "MALICIOUS",
+  malware: "MALWARE",
+  ransomware: "RANSOMWARE",
+  phishing: "PHISHING",
+  unknown: "UNRATED",
+};
+
+function safetyBadge(safety: string | undefined, threats: string[] = []) {
+  const key = (safety ?? "unknown").toLowerCase();
+  const label = SAFETY_LABEL[key] ?? key.toUpperCase();
+  const threat = threats.length ? ` · ${threats.join("/")}` : "";
+  return (
+    <span className={`safety-tag safety-${key}`} title={`Threats detected: ${threats.length ? threats.join(", ") : "none"}`}>
+      {threat ? <ShieldAlert size={12} /> : key === "safe" ? <ShieldCheck size={12} /> : <CircleX size={12} />}
+      {label}{threat}
+    </span>
+  );
 }
 
 export default function Registry() {
@@ -27,10 +49,26 @@ export default function Registry() {
     retry: false,
   });
 
+  const safetyQuery = useQuery({
+    queryKey: ["sites-safety"],
+    queryFn: getSitesSafety,
+    refetchInterval: 30000,
+    retry: false,
+  });
+  const safetyBySite = safetyQuery.data ?? {};
+
   const rows = catalogQuery.data?.items ?? [];
   const total = catalogQuery.data?.total ?? 0;
   const totalPages = Math.max(1, Math.ceil(total / PER_PAGE));
   const counts = (categoriesQuery.data as { counts?: Record<string, number> } | undefined)?.counts;
+
+  const rowSafety = useMemo(() => {
+    const map = new Map<string, SiteSafety>();
+    for (const [key, rec] of Object.entries(safetyBySite)) {
+      map.set(String(rec.site_id ?? key), rec);
+    }
+    return map;
+  }, [safetyBySite]);
 
   const submitSearch = (event: React.FormEvent) => {
     event.preventDefault();
@@ -84,10 +122,13 @@ export default function Registry() {
         ) : (
           <div className="inventory-table-wrap registry-table-wrap">
             <table className="inventory-table">
-              <thead><tr><th>PURPOSE</th><th>URL</th><th>TITLE</th><th>LANG</th><th>DESCRIPTION</th><th>SEEN</th></tr></thead>
+              <thead><tr><th>SECURITY</th><th>PURPOSE</th><th>URL</th><th>TITLE</th><th>LANG</th><th>DESCRIPTION</th><th>SEEN</th></tr></thead>
               <tbody>
-                {rows.map((site: JsonRecord) => (
+                {rows.map((site: JsonRecord) => {
+                  const rec = rowSafety.get(String(site.id));
+                  return (
                   <tr key={String(site.id)}>
+                    <td>{safetyBadge(rec?.safety, rec?.threat_types)}</td>
                     <td>{purposeBadge(getText(site.category, getText(site.purpose, "other")))}</td>
                     <td className="mono inventory-url"><a href={getText(site.url)} target="_blank" rel="noreferrer noopener">{getText(site.url)}</a></td>
                     <td className="inventory-detail">{getText(site.title, "—")}</td>
@@ -95,7 +136,8 @@ export default function Registry() {
                     <td className="inventory-detail">{getText(site.desc, getText(site.snip, "—"))}</td>
                     <td className="mono">{getText(site.first_seen, "—")}</td>
                   </tr>
-                ))}
+                  );
+                })}
               </tbody>
             </table>
           </div>

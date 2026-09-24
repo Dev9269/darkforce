@@ -934,7 +934,7 @@ class BaseDB:
             "observations": self.one("SELECT COUNT(*) c FROM observations")["c"],
             "attribution": self.one("SELECT COUNT(*) c FROM attribution")["c"],
             "sources": [s["name"] for s in sources],
-            "source_status": "SEEDED" if sources else "EMPTY",
+            "source_status": ("LIVE" if last_pass else ("SEEDED" if sources else "EMPTY")),
             "source": sources[0]["name"] if sources else "",
             "last_collection_pass": last_pass["value"] if last_pass else None,
         }

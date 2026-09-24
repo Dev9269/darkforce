@@ -168,9 +168,10 @@ def _crawl_classify(snap, url, max_text=1600):
         return ""
 
 
-def crawl_and_ingest(db, url, use_tor=False, timeout=20):
+def crawl_and_ingest(db, url, use_tor=False, timeout=20, fast=False):
     """Fetch one site and ingest actors, handles, identifiers, findings and a post.
 
+    fast=True uses single-attempt fetches (bulk sweep: dead onions fail quickly).
     Never raises: every step is guarded so a single bad site cannot kill the
     crawl. Returns a summary dict the caller can print or aggregate.
     """
@@ -178,7 +179,7 @@ def crawl_and_ingest(db, url, use_tor=False, timeout=20):
            "findings": 0, "identifiers": 0, "posts": 0, "handles": 0}
 
     try:
-        snap = net.fetch_snap(url, use_tor=use_tor, timeout=timeout)
+        snap = net.fetch_snap(url, use_tor=use_tor, timeout=timeout, fast=fast)
     except Exception as e:
         res["error"] = f"fetch: {e}"
         # previously-indexed site no longer resolves -> signal go-dark / pivot

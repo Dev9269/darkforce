@@ -2275,6 +2275,72 @@ button:active {
   background: rgba(242, 121, 96, .14);
   border: 1px solid rgba(242, 121, 96, .35);
 }
+.safety-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  border-radius: 10px;
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: .04em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+.safety-safe {
+  color: #22c55e;
+  background: rgba(34, 197, 94, .12);
+  border: 1px solid rgba(34, 197, 94, .3);
+}
+.safety-suspicious {
+  color: #f59e0b;
+  background: rgba(245, 158, 11, .12);
+  border: 1px solid rgba(245, 158, 11, .3);
+}
+.safety-malicious,
+.safety-malware,
+.safety-ransomware,
+.safety-phishing {
+  color: #ef4444;
+  background: rgba(239, 68, 68, .12);
+  border: 1px solid rgba(239, 68, 68, .35);
+}
+.safety-unknown {
+  color: #6e858c;
+  background: rgba(110, 133, 140, .12);
+  border: 1px solid rgba(110, 133, 140, .3);
+}
+.not-found-main {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  min-height: calc(100vh - 220px);
+  color: #6e858c;
+  text-align: center;
+}
+.not-found-code {
+  font-size: 48px;
+  color: #0ff;
+  text-shadow: 0 0 24px rgba(0, 255, 255, .35);
+}
+.not-found-title {
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: .12em;
+  color: #d1d5db;
+}
+.route-spinner {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  min-height: 100vh;
+  color: #6e858c;
+  font-size: 11px;
+  letter-spacing: .08em;
+}
 .stat-detail-table-stack {
   display: block;
 }

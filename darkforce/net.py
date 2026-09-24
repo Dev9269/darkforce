@@ -117,11 +117,12 @@ def classify(html, status):
     return None
 
 
-def fetch_snap(url, use_tor=False, timeout=20):
+def fetch_snap(url, use_tor=False, timeout=20, fast=False):
     """Fetch a URL and return a Snap (headers + html + favicon).
 
     Tor-aware: per-host rate limiting, exponential backoff + circuit rotation on
     403/429/timeouts, retries, and self-signed-cert tolerance for .onion hosts.
+    fast=True: single attempt, no backoff/retry/rotation (bulk sweep mode).
     """
     prox = _tor_proxy() if use_tor else None
     h = {"User-Agent": random.choice(UAS)}
@@ -138,10 +139,13 @@ def fetch_snap(url, use_tor=False, timeout=20):
     _polite_wait(url)
     backoff = 5.0
     r = None
-    for attempt in range(4):
+    attempts = range(1) if fast else range(4)
+    for attempt in attempts:
         try:
             r = requests.get(url, proxies=prox, headers=h, timeout=timeout, verify=verify)
             if r.status_code in (403, 429):
+                if fast:
+                    break
                 print(f"[net] {_host(url)} -> {r.status_code}; backoff {backoff:.0f}s + rotate")
                 rotate_circuit()
                 time.sleep(backoff)
@@ -151,7 +155,7 @@ def fetch_snap(url, use_tor=False, timeout=20):
         except requests.exceptions.SSLError:
             verify = False  # self-signed cert: retry once without verification
         except requests.exceptions.RequestException:
-            if use_tor and attempt < 3:
+            if use_tor and attempt < 3 and not fast:
                 print(f"[net] {_host(url)} transient error (attempt {attempt + 1}/4); "
                       f"backoff {backoff:.0f}s + rotate")
                 rotate_circuit()
@@ -187,7 +191,7 @@ def fetch_snap(url, use_tor=False, timeout=20):
         link = urlparse(url)
     except Exception:
         link = None
-    if link and link.scheme.lower() == "https":
+    if link and link.scheme.lower() == "https" and not fast:
         proxy = prox["https"] if prox else None
         info = tlsfp.fetch_tls_peer_info(
             link.hostname or host, link.port or 443, socks_proxy=proxy,
