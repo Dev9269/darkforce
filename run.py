@@ -2,6 +2,7 @@ import argparse
 import os
 import sys
 import threading
+from datetime import datetime, timezone
 from urllib.parse import urlparse
 
 BASE = os.path.dirname(os.path.abspath(__file__))
@@ -292,9 +293,9 @@ def main():
                 print(f"[collector] index refresh failed: {e}")
             totals = run_pass(db, tor_available, verbose=False)
             seed_breaches(db)
-            from datetime import datetime, timezone
             ts = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
-            db.exe("INSERT OR REPLACE INTO meta(key, value) VALUES('last_collection_pass', ?)", (ts,))
+            db.exe("INSERT INTO meta(key, value) VALUES('last_collection_pass', ?) "
+                   "ON CONFLICT(key) DO UPDATE SET value=excluded.value", (ts,))
             return totals
         except Exception as e:
             print(f"[collector] pass error: {e}")
