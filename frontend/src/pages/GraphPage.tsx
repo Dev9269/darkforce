@@ -114,15 +114,65 @@ export default function GraphPage() {
 
   const graphToolbar = (
     <div className="graph-toolbar" data-testid="graph-toolbar">
-      <button type="button" title="Zoom out" onClick={() => graphApiRef.current?.zoomOut()}><ZoomOut size={14} /></button>
-      <button type="button" title="Zoom in" onClick={() => graphApiRef.current?.zoomIn()}><ZoomIn size={14} /></button>
-      <button type="button" title="Fit the whole graph on screen" onClick={() => graphApiRef.current?.fit()}><RotateCcw size={14} /></button>
-      <button type="button" title={showLabels ? "Hide names" : "Show names"} onClick={toggleGraphLabels}><Tags size={14} /></button>
-      <button type="button" title="Export as PNG" onClick={exportImage}><Download size={14} /></button>
-      <button type="button" className="graph-fullscreen-btn" title={isFullscreen ? "Exit full screen (Esc)" : "Full screen"} onClick={toggleFullscreen} aria-label={isFullscreen ? "Exit full screen" : "Open graph full screen"}>
-        {isFullscreen ? <Minimize2Icon size={14} /> : <Maximize2Icon size={14} />}
-        <span className="toolbar-label">{isFullscreen ? "Exit full" : "Full screen"}</span>
-      </button>
+      <div className="graph-toolbar-group" data-testid="graph-toolbar-zoom">
+        <button type="button" title="Zoom out" aria-label="Zoom out" onClick={() => graphApiRef.current?.zoomOut()}><ZoomOut size={14} /></button>
+        <button type="button" title="Zoom in" aria-label="Zoom in" onClick={() => graphApiRef.current?.zoomIn()}><ZoomIn size={14} /></button>
+        <button type="button" title="Fit the whole graph on screen" aria-label="Fit graph to screen" onClick={() => graphApiRef.current?.fit()}><RotateCcw size={14} /></button>
+      </div>
+      <i className="graph-toolbar-sep" />
+      <div className="graph-toolbar-group" data-testid="graph-toolbar-view">
+        <button type="button" title={showLabels ? "Hide names" : "Show names"} aria-label={showLabels ? "Hide names" : "Show names"} onClick={toggleGraphLabels} className={showLabels ? "is-on" : ""}><Tags size={14} /></button>
+      </div>
+      <i className="graph-toolbar-sep" />
+      <div className="graph-toolbar-group" data-testid="graph-toolbar-export">
+        <button type="button" title="Export as PNG" aria-label="Export as PNG" onClick={exportImage}><Download size={14} /></button>
+        <button type="button" className="graph-fullscreen-btn" title={isFullscreen ? "Exit full screen (Esc)" : "Full screen"} onClick={toggleFullscreen} aria-label={isFullscreen ? "Exit full screen" : "Open graph full screen"}>
+          {isFullscreen ? <Minimize2Icon size={14} /> : <Maximize2Icon size={14} />}
+          <span className="toolbar-label">{isFullscreen ? "Exit full" : "Full screen"}</span>
+        </button>
+      </div>
+    </div>
+  );
+
+  const categoryChips = (
+    <div className="graph-filter-bar" data-testid="graph-category-filter">
+      <div className="graph-filter-label"><Filter size={12} /> CATEGORY</div>
+      <div className="graph-filter-chips">
+        <button
+          type="button"
+          className={`graph-cat-chip is-all ${excludedCategories.length === 0 ? "active" : ""}`}
+          onClick={() => setExcludedCategories([])}
+          data-testid="graph-cat-chip-all"
+        >
+          ALL <span className="chip-count">{categories.length}</span>
+        </button>
+        {categories.map((cat) => {
+          const excluded = excludedCategories.includes(cat);
+          return (
+            <button
+              type="button"
+              key={cat}
+              className={`graph-cat-chip ${excluded ? "is-excluded" : "active"}`}
+              onClick={() => toggleCategory(cat)}
+              data-testid={`graph-cat-chip-${cat}`}
+              title={excluded ? `Show ${cat}` : `Hide ${cat}`}
+            >
+              <span className="capitalize">{cat}</span>
+              <span className="chip-count">{categoryCounts[cat] ?? 0}</span>
+            </button>
+          );
+        })}
+      </div>
+      {excludedCategories.length > 0 && (
+        <button
+          type="button"
+          className="graph-filter-clear"
+          onClick={() => setExcludedCategories([])}
+          data-testid="graph-category-clear"
+        >
+          <X size={11} /> RESET
+        </button>
+      )}
     </div>
   );
 
@@ -252,6 +302,7 @@ export default function GraphPage() {
                 <span><i className="legend-dot finding" style={{ background: "#f27960" }} /> evidence</span>
               </div>
             </div>
+            {categoryChips}
             <div className={`graph-stage${isFullscreen ? " graph-stage-fullscreen" : ""}`} data-testid="graph-main-stage">
               {graphToolbar}
               {isFullscreen && (

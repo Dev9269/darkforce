@@ -35,3 +35,5 @@ _sample.py
 data/raw/
 server-out.log
 server-err.log
+frontend/src/index.css.bak
+frontend/src/index.tokens.css

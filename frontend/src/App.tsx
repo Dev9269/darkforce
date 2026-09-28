@@ -1,6 +1,6 @@
-import { lazy, Suspense } from "react";
+import { lazy, Suspense, useEffect, useState } from "react";
 import { Link, Routes, Route } from "react-router-dom";
-import { LoaderCircle, SearchX } from "lucide-react";
+import { LoaderCircle, SearchX, Moon, Sun } from "lucide-react";
 import { Toaster } from "@/components/ui/sonner";
 
 // React.lazy + Suspense keep each page in its own chunk (code-split) and load
@@ -31,6 +31,50 @@ function NotFound() {
   );
 }
 
+function ThemeToggle() {
+  const [dark, setDark] = useState(() => {
+    try {
+      return localStorage.getItem("df-theme") !== "light";
+    } catch {
+      return true;
+    }
+  });
+
+  useEffect(() => {
+    document.documentElement.classList.toggle("dark", dark);
+    try {
+      localStorage.setItem("df-theme", dark ? "dark" : "light");
+    } catch {}
+  }, [dark]);
+
+  return (
+    <button
+      type="button"
+      aria-label="Toggle light / dark theme"
+      title="Toggle light / dark theme"
+      onClick={() => setDark((d) => !d)}
+      style={{
+        position: "fixed",
+        top: 12,
+        right: 12,
+        zIndex: 60,
+        width: 34,
+        height: 34,
+        display: "grid",
+        placeItems: "center",
+        cursor: "pointer",
+        borderRadius: 8,
+        border: "1px solid var(--c-border)",
+        background: "var(--c-surface)",
+        color: "var(--c-text)",
+        boxShadow: "0 2px 10px rgba(0,0,0,.18)",
+      }}
+    >
+      {dark ? <Sun size={16} /> : <Moon size={16} />}
+    </button>
+  );
+}
+
 export default function App() {
   return (
     <Suspense
@@ -41,6 +85,7 @@ export default function App() {
         </div>
       }
     >
+      <ThemeToggle />
       <Toaster richColors />
       <Routes>
         <Route path="/" element={<Home />} />
