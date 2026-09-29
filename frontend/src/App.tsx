@@ -16,6 +16,7 @@ const Cases = lazy(() => import("@/pages/Cases"));
 const Resources = lazy(() => import("@/pages/Resources"));
 const News = lazy(() => import("@/pages/News"));
 const GraphPage = lazy(() => import("@/pages/GraphPage"));
+const Legal = lazy(() => import("@/pages/Legal"));
 
 function NotFound() {
   return (
@@ -98,8 +99,19 @@ export default function App() {
         <Route path="/resources" element={<Resources />} />
         <Route path="/news" element={<News />} />
         <Route path="/graph" element={<GraphPage />} />
+        <Route path="/terms" element={<Legal docId="terms" />} />
+        <Route path="/privacy" element={<Legal docId="privacy" />} />
+        <Route path="/cookies" element={<Legal docId="cookies" />} />
         <Route path="*" element={<NotFound />} />
       </Routes>
+      <footer className="app-footer">
+        <span className="mono">DARKFORCE · RESEARCH CONSOLE</span>
+        <nav className="footer-links">
+          <Link to="/terms">Terms</Link>
+          <Link to="/privacy">Privacy</Link>
+          <Link to="/cookies">Cookies</Link>
+        </nav>
+      </footer>
     </Suspense>
   );
 }

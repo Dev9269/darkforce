@@ -4100,3 +4100,58 @@ button[data-slot="button"]:not([class*="variant"]):not(:disabled):hover,
   color: #e2eef0;
 }
 .registry-table tbody tr:hover { box-shadow: inset 3px 0 0 #52e1ec; }
+
+/* ---------- app footer (legal links) ---------- */
+.app-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 14px 28px;
+  border-top: 1px solid rgba(120, 160, 170, .14);
+  color: var(--c-muted-2);
+  font-size: 11px;
+}
+.footer-links { display: inline-flex; gap: 18px; }
+.footer-links a {
+  color: var(--c-muted-2);
+  font: 600 11px 'JetBrains Mono Variable', monospace;
+  letter-spacing: .1em;
+  text-decoration: none;
+}
+.footer-links a:hover { color: #52e1ec; }
+
+/* ---------- legal pages ---------- */
+.legal-main {
+  max-width: 840px;
+  margin: 0 auto;
+  padding: 40px 28px 64px;
+}
+.legal-h1 {
+  color: var(--c-title-blue);
+  font: 700 22px 'JetBrains Mono Variable', monospace;
+  letter-spacing: .14em;
+  text-transform: uppercase;
+  margin: 0 0 6px;
+}
+.legal-h2 {
+  color: var(--c-text);
+  font: 700 13px 'JetBrains Mono Variable', monospace;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+  margin: 28px 0 8px;
+}
+.legal-body {
+  color: var(--c-text-2);
+  line-height: 1.65;
+  font-size: 13px;
+  margin: 0;
+}
+.legal-footnote {
+  margin-top: 40px;
+  padding-top: 16px;
+  border-top: 1px solid rgba(120, 160, 170, .14);
+  color: var(--c-muted-2);
+  font-size: 10px;
+  letter-spacing: .12em;
+}

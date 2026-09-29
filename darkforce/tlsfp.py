@@ -58,6 +58,10 @@ def _x509_from_der(der):
             "tls_issuer": iss[0].value if iss else "",
             "tls_valid_from": nb.isoformat(),
             "tls_valid_to": na.isoformat(),
+            # Serial + issuer together identify one certificate uniquely, which
+            # makes it a usable pivot even when the private key differs from
+            # every other site the operator runs.
+            "cert_serial": format(cert.serial_number, "x"),
         }
     except ImportError:
         pass
@@ -77,13 +81,52 @@ def _x509_from_dict(parsed):
         return ""
 
     sans = [v for _, v in (parsed.get("subjectAltName") or [])]
-    return {
+    out = {
         "tls_cn": cn_of(parsed.get("subject")),
         "cert_sans": sans,
         "tls_issuer": cn_of(parsed.get("issuer")),
         "tls_valid_from": parsed.get("notBefore", ""),
         "tls_valid_to": parsed.get("notAfter", ""),
     }
+    # The stdlib fallback exposes no serial field, so recover it from the
+    # TBSCertificate SEQUENCE that ssl decoded for us.
+    der = parsed.get("_der")
+    if der:
+        try:
+            out["cert_serial"] = _serial_from_der(der)
+        except Exception:
+            pass
+    return out
+
+
+def _serial_from_der(der):
+    """Minimal DER walk to reach tbsCertificate.serialNumber.
+
+    Certificate ::= SEQUENCE { tbsCertificate, signatureAlgorithm, signature }
+    TBSCertificate ::= SEQUENCE { [0] version, serialNumber INTEGER, ... }
+    """
+    i = 0
+
+    def read_tlv(buf, pos):
+        tag = buf[pos]
+        pos += 1
+        n = buf[pos]
+        pos += 1
+        if n & 0x80:
+            k = n & 0x7F
+            n = int.from_bytes(buf[pos:pos + k], "big")
+            pos += k
+        return tag, buf[pos:pos + n], pos + n
+
+    _, cert_body, _ = read_tlv(der, i)
+    _, tbs, _ = read_tlv(cert_body, i)
+    tag, first, nxt = read_tlv(tbs, i)
+    if tag == 0xA0:            # explicit [0] version, skip it
+        _, serial_bytes, _ = read_tlv(tbs, nxt)
+    else:
+        serial_bytes = first
+    v = int.from_bytes(serial_bytes, "big") if serial_bytes else 0
+    return format(v, "x")
 
 
 def _fmt_fp(digest, sep=":"):

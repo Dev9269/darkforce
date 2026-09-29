@@ -10,3 +10,14 @@ pyvis>=0.3
 pytest>=8.0
 httpx>=0.27
 telethon>=1.35
+slowapi>=0.1.9
+
+# Previously imported but never declared, so a clean install could not run
+# graph_analysis.py or the TLS/SSH fingerprinting at all.
+networkx>=3.0
+cryptography>=42.0
+paramiko>=3.4
+
+# Favicon perceptual hashing (darkforce/imaging.py). Without it the exact
+# favicon digest still works and dhash() returns "" rather than raising.
+Pillow>=10.0

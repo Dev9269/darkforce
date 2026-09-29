@@ -121,7 +121,12 @@ def _page_title(soup, url):
 
 def _page_handles(soup, url, html=""):
     """Distinct author handles detectable on the page; falls back to hostname
-    prefix, then to selector-free regex extraction over raw html."""
+    prefix, then to selector-free regex extraction over raw html.
+
+    Every candidate is passed through is_plausible_site_handle: author
+    selectors also match member counts, post numbers and CDN path fragments
+    ('42', '176', 'pub-firebasestorage') that would otherwise each become a
+    spurious actor."""
     found = []
     seen = set()
     for sel in AUTHOR_SELECTORS:
@@ -133,7 +138,7 @@ def _page_handles(soup, url, html=""):
             v = re.sub(r"^(Author|Posted by|User|Member|Vendor|Seller)\s*[:,]?\s*", "", v, flags=re.I)
             v = v.split("@")[0]
             h = _clean_handle(v)
-            if h and len(h) >= 3 and h.lower() not in seen:
+            if h and len(h) >= 3 and h.lower() not in seen and extract.is_plausible_site_handle(h):
                 seen.add(h.lower())
                 found.append(h)
             if len(found) >= 8:
@@ -145,13 +150,13 @@ def _page_handles(soup, url, html=""):
     if html:
         for m in extract.extract_page_handles(html):
             h = _clean_handle(m["value"])
-            if h and len(h) >= 3 and h.lower() not in seen:
+            if h and len(h) >= 3 and h.lower() not in seen and extract.is_plausible_site_handle(h):
                 seen.add(h.lower())
                 found.append(h)
         if found:
             return found
     h = _host_handle(url)
-    return [h] if h else []
+    return [h] if h and extract.is_plausible_site_handle(h) else []
 
 
 def _page_body(soup, max_len=4000):
@@ -221,13 +226,34 @@ def crawl_and_ingest(db, url, use_tor=False, timeout=20, fast=False):
             url,
             server=fp["server"] or "",
             favicon_hash=fp["favicon_hash"],
+            favicon_phash=fp.get("favicon_phash") or None,
             content_hash=fp["content_hash"],
             category=kw_cat,
             status=str(getattr(snap, "status", "?")),
             cert_sans=fp["cert_sans"] or None,
             tls_issuer=fp["tls_issuer"] or None,
             cert_fp=fp["cert_fp"] or None,
+            cert_serial=fp.get("cert_serial") or None,
+            cert_valid_from=fp.get("cert_valid_from") or None,
+            cert_valid_to=fp.get("cert_valid_to") or None,
+            ssh_fp=fp.get("ssh_fp") or None,
         )
+
+        # Retain the served body before any extraction touches it. Extraction
+        # normalises and truncates, so a claim derived from the body is only
+        # defensible if the untouched response is on record. Placed after the
+        # upsert so the snapshot is attached to a real site_id.
+        try:
+            db.add_html_snapshot(
+                site_id=site_id, url=url, html=snap.html or "",
+                source_id=_site_source(db, site_id),
+                status=getattr(snap, "status", ""),
+                encoding=(snap.meta or {}).get("encoding", ""),
+                headers=getattr(snap, "headers", None) or {},
+                raw_bytes=(snap.meta or {}).get("raw_bytes"),
+            )
+        except Exception as e:
+            log("WARN {} html snapshot: {}", url, e)
     except Exception as e:
         res["error"] = f"site: {e}"
         log("FAIL {} site upsert: {}", url, e)
@@ -305,8 +331,14 @@ def crawl_and_ingest(db, url, use_tor=False, timeout=20, fast=False):
         except Exception as e:
             log("WARN {} handle {}: {}", url, h, e)
 
+    # Identifiers describe people, and people are not mentioned in CSS/JS.
+    # Mining raw markup previously turned @media/@context/@type into "telegram
+    # handles" shared across dozens of sites, which collapsed the whole corpus
+    # into a single actor. visible_text keeps href/src URLs (onions live there)
+    # while dropping script, style and comment subtrees.
     try:
-        for ident in extract.extract_identifiers(snap.html):
+        prose = extract.visible_text(snap.html)
+        for ident in extract.extract_identifiers(prose, provenance="prose"):
             db.add_identifier(
                 actor_id=None,
                 handle=handles[0] if handles else "",
@@ -316,7 +348,7 @@ def crawl_and_ingest(db, url, use_tor=False, timeout=20, fast=False):
                 site_id=site_id,
                 url=url,
                 source_id=_site_source(db, site_id),
-                method=f"extract:{ident['kind']}",
+                method=ident.get("method") or f"extract:{ident['kind']}",
             )
             res["identifiers"] += 1
             if ident["kind"] in ("btc", "xmr"):

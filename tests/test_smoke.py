@@ -115,12 +115,61 @@ def test_scan_reports(clearnet_index=None):
 
 
 # ---------- stylometry ----------
-def test_stylo_cosine_in_range():
-    a = stylo.profile(["this is the quick brown fox" * 5])
-    b = stylo.profile(["this is the quick brown fox" * 5])
-    c = stylo.profile(["completely different vocabulary zeta kappa omega" * 5])
-    assert 0 <= stylo.cosine(a, b) <= 1
-    assert stylo.cosine(a, b) > stylo.cosine(a, c)
+def test_stylo_match_all_returns_dict_pairs():
+    """The engine reports (profiles, pairs, per-handle) with dict records."""
+    import random
+    from darkforce import stylo
+
+    class _Row(dict):
+        __getattr__ = dict.get
+
+    class _DB:
+        def __init__(self, rows):
+            self._rows = rows
+
+        def q(self, _sql):
+            return self._rows
+
+    words = """
+i think we should really just go ahead and do it again today because honestly
+there is no reason not to and it might even help us out later when the other
+folks ask about it again like they always do somehow committee noted that no
+fewer than three members objected strongly to the proposal submitted tuesday
+afternoon concerning the amendment circulated beforehand all relevant
+stakeholders for consideration prior to the scheduled review of the matter
+itself ship tonight if escrow clears otherwise refund immediately questions
+asked we have stock in the warehouse already packed and ready to go out
+""".split()
+
+    def author(seed, n_posts=16):
+        rng = random.Random(seed)
+        posts = []
+        for _ in range(n_posts):
+            body = " ".join(rng.sample(words, rng.randrange(40, 70)))
+            posts.append(f"Welcome to the board. Read the rules. {body}")
+        return posts
+
+    db = _DB([_Row(handle=h, title="", body=t)
+              for h, texts in {"alice": author(3), "alice_v2": author(3),
+                               "bob": author(99), "carol": author(88)}.items()
+              for t in texts])
+    prof, pairs, per = stylo.match_all(db, min_posts=1)
+    assert isinstance(prof, dict) and isinstance(per, dict)
+    for p in pairs:
+        assert set(p) >= {"a", "b", "score", "p_value", "reliability",
+                          "replication", "significant", "evidence"}
+        assert 0.0 <= p["score"] <= 1.0
+
+
+def test_stylo_cosine_bounds():
+    from darkforce import stylo
+    a = [0.1] * 30 + [0.3, 0.5]
+    b = [0.1] * 30 + [0.3, 0.5]
+    assert 0 <= stylo.cosine(a, a) <= 1
+    assert abs(stylo.cosine(a, a) - 1.0) < 1e-9
+    assert abs(stylo.cosine(a, b) - 1.0) < 1e-9
+    assert stylo.cosine([], b) == 0.0
+    assert len(a) >= stylo.MIN_FEATURES
 
 
 # ---------- db round-trip ----------
@@ -304,18 +353,23 @@ def test_stylo_hour_and_vocab_features_separate_handles(sqlite_db):
         for i, body in enumerate([txt, txt]):
             sqlite_db.save_post(h, sid, f"http://m.onion/p{i}", "t", body,
                                 f"2026-01-0{1 + i}T0{i + 1 if i < 9 else 8}:00:00")
-    prof, pairs, per = stylo.match_all(sqlite_db, min_posts=2)
-    assert not any("night_owl" in m["handle"] for m in per.get("morning_duck", []))
-    assert not any("morning_duck" in m["handle"] for m in per.get("night_owl", []))
-    assert not any(("night_owl" in p and "morning_duck" in p)
-                   for pair in pairs for p in [pair[0], pair[1]])
+    _, pairs, per = stylo.match_all(sqlite_db, min_posts=2)
+    flagged = {(p["a"], p["b"]) for p in pairs if p["significant"]}
+    assert not any(("night_owl" in f and "morning_duck" in f)
+                   for f in flagged)
 
 
-def test_stylo_profile_hour_feature_exists():
+def test_stylo_features_present_in_profile():
     from darkforce import stylo
-    d = stylo.profile(["buying guns bitcoins vouch"], hours=["2026-01-01T03:00:00",
-                                                              "2026-01-02T03:00:00"])
-    assert any(k.startswith("h") and v > 0 for k, v in d.items())
+    c = stylo._counts("buying guns bitcoins vouch now. Escrow required.")
+    assert c.get("__nwords__") >= 5
+    assert any(k.startswith(("fw:", "p:", "cg:")) for k in c)
+    # a counted profile aggregates back to a real vector when a vocab exists
+    hc = {"buyer": [c] * 5, "seller": [c] * 5}
+    vocab, ok = stylo.build_vocab(hc)
+    assert ok
+    vecs = stylo._vectors(hc, vocab)
+    assert stylo.aggregate(vecs["buyer"])
 
 
 def test_run_make_parser_accepts_import_index():

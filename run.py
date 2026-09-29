@@ -117,7 +117,7 @@ def run_pass(db, tor, max_sites=None, verbose=True, crawl_cap=None):
                 if r["error"]:
                     totals["failed"] += 1
                 for k in ("findings", "identifiers", "posts", "handles"):
-                    totals[k] += r[k]
+                    totals[k] += r.get(k, 0)
                 if verbose and (r["error"] or r["skipped"] or r["findings"] or r["identifiers"] or r["posts"] or r["handles"]):
                     extra = (f"  ({r['error']})" if r["error"] else "") or (f"  (skipped: {r['skipped']})" if r["skipped"] else "")
                     print(f"  [{i}/{n_crawl}] {url} -> findings={r['findings']} "
@@ -132,7 +132,7 @@ def run_pass(db, tor, max_sites=None, verbose=True, crawl_cap=None):
             if r["error"]:
                 totals["failed"] += 1
             for k in ("findings", "identifiers", "posts", "handles"):
-                totals[k] += r[k]
+                totals[k] += r.get(k, 0)
             if verbose and (r["error"] or r["skipped"] or r["findings"] or r["identifiers"] or r["posts"] or r["handles"]):
                 extra = (f"  ({r['error']})" if r["error"] else "") or (f"  (skipped: {r['skipped']})" if r["skipped"] else "")
                 print(f"  [{i}/{n_crawl}] {url} -> findings={r['findings']} "
@@ -183,6 +183,14 @@ def make_parser():
                     help="fetch Ahmia index + local harvest catalogs and register as listed (then exit)")
     ap.add_argument("--sweep", action="store_true",
                     help="run one rolling liveness sweep (re-crawl stale sites), then exit")
+    ap.add_argument("--rebuild-actors", action="store_true",
+                    help="re-derive actors from scratch: re-establish @-handle provenance "
+                         "from stored post text, drop implausible identifiers, reset all "
+                         "actor/link state and re-link under the current merge policy")
+    ap.add_argument("--enable-probe", action="store_true",
+                    help="arm the analyst-triggered read-only GET prober for this process. "
+                         "Off by default; probing is never scheduled autonomously. Must be "
+                         "set per launch, not by an environment variable carried between runs")
     return ap
 
 
@@ -243,6 +251,19 @@ def main():
                 print(f"[wipe] {t}: {e}")
         db.exe("DELETE FROM meta WHERE key IN ('last_collection_pass')")
         print("[wipe] data cleared")
+
+    if args.rebuild_actors:
+        from darkforce import link, stylo
+
+        prov = link.rederive_handle_provenance(db)
+        print("provenance re-derived:", prov)
+        purged = link.purge_implausible_handles(db)
+        print("implausible handle rows purged:", purged)
+        prof, pairs, per = stylo.match_all(db)
+        result = link.rebuild_actors(db, stylo_pairs=pairs, reset=True)
+        print("actors re-derived:", result)
+        print("stats:", db.stats())
+        return
 
     if args.refresh:
         from darkforce import link, stylo
@@ -347,10 +368,18 @@ def main():
         sched.start()
         print(f"[daemon] autonomous collection every {minutes} min (Tor={'yes' if tor else 'NO'})")
 
+    if args.enable_probe:
+        # Set here, at launch, only. darkforce.api reads it once at import.
+        os.environ["DARKFORCE_ENABLE_PROBE"] = "1"
+        print("[probe] read-only analyst-triggered probing ARMED for this process")
+    else:
+        os.environ.pop("DARKFORCE_ENABLE_PROBE", None)
+
     from darkforce.api import main as run_api
 
-    os.environ["PORT"] = str(args.port)
-    print(f"\nDarkForce dashboard: http://localhost:{args.port}\n")
+    # Railway/Render/Fly/Spaces inject $PORT; our --port flag is the fallback.
+    os.environ["PORT"] = str(os.environ.get("PORT") or args.port)
+    print(f"\nDarkForce dashboard: http://localhost:{os.environ['PORT']}\n")
     run_api()
 
 

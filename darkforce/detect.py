@@ -6,6 +6,15 @@ import shutil
 import subprocess
 
 from .extract import IP
+from .imaging import dhash as _dhash
+
+
+def _favicon_phash(data):
+    """Indirection so a missing Pillow degrades to '' instead of breaking a crawl."""
+    try:
+        return _dhash(data)
+    except Exception:
+        return ""
 
 MOD_STATUS_RE = re.compile(r"Apache(\s+Server\s+Status)?|Server:\s+Apache", re.I)
 SERVER_STATUS_IP = re.compile(r"\b(?:10\.|192\.168\.|172\.(?:1[6-9]|2\d|3[01])\.|127\.)[\d.]*\b")
@@ -54,7 +63,11 @@ def fingerprint(snap):
     h = _hash(snap.favicon)
     c = hashlib.sha1(snap.html.encode("utf-8", "ignore")).hexdigest()
     return {
+        # Byte-exact digest: proves two responses were the same file.
         "favicon_hash": h,
+        # Perceptual hash: survives re-encoding and resizing, so it can answer
+        # "same image?" where the exact digest can only answer "same bytes?".
+        "favicon_phash": _favicon_phash(snap.favicon),
         "content_hash": c,
         "server": (snap.headers.get("Server") or "").strip(),
         "powered": (snap.headers.get("X-Powered-By") or "").strip(),
@@ -64,6 +77,9 @@ def fingerprint(snap):
         "cert_sans": snap.meta.get("cert_sans", ""),
         "tls_issuer": snap.meta.get("tls_issuer", ""),
         "cert_fp": snap.meta.get("cert_fp", ""),
+        "cert_serial": str(snap.meta.get("cert_serial", "") or ""),
+        "cert_valid_from": str(snap.meta.get("tls_valid_from", "") or ""),
+        "cert_valid_to": str(snap.meta.get("tls_valid_to", "") or ""),
         "tls_protocol": snap.meta.get("tls_protocol", ""),
         "tls_cipher": snap.meta.get("tls_cipher", ""),
         "ssh_fp": snap.meta.get("ssh_fp", ""),

@@ -184,7 +184,13 @@ def fetch_snap(url, use_tor=False, timeout=20, fast=False):
         pass
     host = _host(url)
     hint = classify(html, r.status_code)
-    meta = {"hostname": host, "wall": hint}
+    # Keep the exact response bytes and the declared encoding alongside the
+    # decoded text. Evidence hashing must cover what came off the wire: hashing
+    # r.text would hash requests' charset guess, so two byte-identical responses
+    # could differ in hash, and a re-fetch could silently fail to match.
+    meta = {"hostname": host, "wall": hint,
+            "raw_bytes": r.content,
+            "encoding": r.encoding or (r.apparent_encoding or "")}
     try:
         from urllib.parse import urlparse
 
@@ -200,6 +206,9 @@ def fetch_snap(url, use_tor=False, timeout=20, fast=False):
         meta["cert_sans"] = ",".join(info.get("cert_sans") or [])
         meta["cert_fp"] = info.get("cert_fp", "")
         meta["tls_issuer"] = info.get("tls_issuer", "")
+        meta["cert_serial"] = info.get("cert_serial", "")
+        meta["tls_valid_from"] = info.get("tls_valid_from", "")
+        meta["tls_valid_to"] = info.get("tls_valid_to", "")
         meta["tls_protocol"] = info.get("protocol", "")
         meta["tls_cipher"] = info.get("cipher", "")
         ssh_fp = ""

@@ -14,7 +14,7 @@ import threading
 from datetime import datetime, timedelta, timezone
 
 from .config import DB_PATH, DATABASE_URL
-from . import categories
+from . import categories, imaging
 
 
 def utcnow():
@@ -67,6 +67,23 @@ CREATE TABLE IF NOT EXISTS observations (
 );
 CREATE UNIQUE INDEX IF NOT EXISTS ux_obs_hash ON observations(content_hash);
 CREATE INDEX IF NOT EXISTS ix_obs_site ON observations(site_id);
+CREATE TABLE IF NOT EXISTS site_snapshots (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  site_id INTEGER, url TEXT, ts TEXT, source_id INTEGER,
+  status TEXT DEFAULT '', encoding TEXT DEFAULT '',
+  bytes INTEGER DEFAULT 0, html_sha256 TEXT DEFAULT '',
+  headers TEXT DEFAULT '', html TEXT,
+  truncated INTEGER DEFAULT 0, collector_version TEXT DEFAULT ''
+);
+CREATE TABLE IF NOT EXISTS image_hashes (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  kind TEXT, phash TEXT, exact_hash TEXT,
+  handle TEXT DEFAULT '', actor_id INTEGER, site_id INTEGER,
+  site_url TEXT DEFAULT '', url TEXT, bytes INTEGER DEFAULT 0,
+  source_id INTEGER, ts TEXT
+);
+CREATE INDEX IF NOT EXISTS ix_img_kind_phash ON image_hashes(kind, phash);
+CREATE INDEX IF NOT EXISTS ix_img_actor ON image_hashes(actor_id);
 CREATE TABLE IF NOT EXISTS link_evidence (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   link_id INTEGER, evidence TEXT, content_hash TEXT,
@@ -154,6 +171,23 @@ CREATE TABLE IF NOT EXISTS observations (
 );
 CREATE UNIQUE INDEX IF NOT EXISTS ux_obs_hash ON observations(content_hash);
 CREATE INDEX IF NOT EXISTS ix_obs_site ON observations(site_id);
+CREATE TABLE IF NOT EXISTS site_snapshots (
+  id BIGSERIAL PRIMARY KEY,
+  site_id INTEGER, url TEXT, ts TEXT, source_id INTEGER,
+  status TEXT DEFAULT '', encoding TEXT DEFAULT '',
+  bytes INTEGER DEFAULT 0, html_sha256 TEXT DEFAULT '',
+  headers TEXT DEFAULT '', html TEXT,
+  truncated INTEGER DEFAULT 0, collector_version TEXT DEFAULT ''
+);
+CREATE TABLE IF NOT EXISTS image_hashes (
+  id BIGSERIAL PRIMARY KEY,
+  kind TEXT, phash TEXT, exact_hash TEXT,
+  handle TEXT DEFAULT '', actor_id INTEGER, site_id INTEGER,
+  site_url TEXT DEFAULT '', url TEXT, bytes INTEGER DEFAULT 0,
+  source_id INTEGER, ts TEXT
+);
+CREATE INDEX IF NOT EXISTS ix_img_kind_phash ON image_hashes(kind, phash);
+CREATE INDEX IF NOT EXISTS ix_img_actor ON image_hashes(actor_id);
 CREATE TABLE IF NOT EXISTS link_evidence (
   id BIGSERIAL PRIMARY KEY,
   link_id INTEGER, evidence TEXT, content_hash TEXT,
@@ -213,7 +247,7 @@ CREATE TABLE IF NOT EXISTS sources (
 CREATE TABLE IF NOT EXISTS sites (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   url TEXT UNIQUE, title TEXT, server TEXT, tech TEXT,
-  favicon_hash TEXT, content_hash TEXT, status TEXT,
+  favicon_hash TEXT, favicon_phash TEXT, content_hash TEXT, status TEXT,
   category TEXT, source_id INTEGER, first_seen TEXT, last_scan TEXT,
   lang TEXT
 );
@@ -254,8 +288,10 @@ CREATE INDEX IF NOT EXISTS ix_posts_h ON posts(handle);
 CREATE TABLE IF NOT EXISTS clearnet_fingerprints (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   host TEXT UNIQUE, title TEXT DEFAULT '',
-  favicon_hash TEXT, content_hash TEXT, server TEXT DEFAULT '',
-  analytics_id TEXT DEFAULT '', last_seen TEXT
+  favicon_hash TEXT, favicon_phash TEXT, content_hash TEXT, server TEXT DEFAULT '',
+  analytics_id TEXT DEFAULT '', last_seen TEXT,
+  cert_fp TEXT, cert_serial TEXT, cert_issuer TEXT,
+  cert_valid_from TEXT, cert_valid_to TEXT, ssh_fp TEXT
 );
 CREATE INDEX IF NOT EXISTS ix_clearnet_fp_favicon ON clearnet_fingerprints(favicon_hash);
 CREATE INDEX IF NOT EXISTS ix_clearnet_fp_content ON clearnet_fingerprints(content_hash);
@@ -270,7 +306,7 @@ CREATE TABLE IF NOT EXISTS sources (
 CREATE TABLE IF NOT EXISTS sites (
   id BIGSERIAL PRIMARY KEY,
   url TEXT UNIQUE, title TEXT, server TEXT, tech TEXT,
-  favicon_hash TEXT, content_hash TEXT, status TEXT,
+  favicon_hash TEXT, favicon_phash TEXT, content_hash TEXT, status TEXT,
   category TEXT, source_id INTEGER, first_seen TEXT, last_scan TEXT,
   lang TEXT
 );
@@ -311,8 +347,10 @@ CREATE INDEX IF NOT EXISTS ix_posts_h ON posts(handle);
 CREATE TABLE IF NOT EXISTS clearnet_fingerprints (
   id BIGSERIAL PRIMARY KEY,
   host TEXT UNIQUE, title TEXT DEFAULT '',
-  favicon_hash TEXT, content_hash TEXT, server TEXT DEFAULT '',
-  analytics_id TEXT DEFAULT '', last_seen TEXT
+  favicon_hash TEXT, favicon_phash TEXT, content_hash TEXT, server TEXT DEFAULT '',
+  analytics_id TEXT DEFAULT '', last_seen TEXT,
+  cert_fp TEXT, cert_serial TEXT, cert_issuer TEXT,
+  cert_valid_from TEXT, cert_valid_to TEXT, ssh_fp TEXT
 );
 CREATE INDEX IF NOT EXISTS ix_clearnet_fp_favicon ON clearnet_fingerprints(favicon_hash);
 CREATE INDEX IF NOT EXISTS ix_clearnet_fp_content ON clearnet_fingerprints(content_hash);
@@ -337,6 +375,10 @@ def _pg_sql(sql):
     return sql.replace("?", "%s")
 
 
+MAX_SNAPSHOT_BYTES = 1024 * 1024
+SNAPSHOT_RETENTION = 3
+
+
 class BaseDB:
     """Shared business methods; drivers only implement q/one/exe/backend bits."""
 
@@ -347,6 +389,15 @@ class BaseDB:
                 self.conn.close()
             except Exception:
                 pass
+
+    def commit(self):
+        """Commit pending work. SQLite serializes through its lock so concurrent
+        threads cannot corrupt cursor state; Postgres autocommits already."""
+        if getattr(self, "_lock", None) is not None:
+            with self._lock:
+                self.conn.commit()
+        else:
+            self.conn.commit()
 
     # ---------- upserts ----------
     def upsert_source(self, name, type_, url, notes=""):
@@ -387,22 +438,178 @@ class BaseDB:
             "SELECT id,url,cert_sans FROM sites WHERE cert_sans LIKE ?",
             (f"%{domain}%",))
 
+    _CLEARNET_CERT_COLS = ("cert_fp", "cert_serial", "cert_issuer",
+                           "cert_valid_from", "cert_valid_to", "ssh_fp")
+
     def upsert_clearnet_fp(self, host, title="", favicon_hash=None, content_hash=None,
-                           server="", analytics_id=""):
+                           server="", analytics_id="", favicon_phash=None, **cert):
+        cols = ("host,title,favicon_hash,favicon_phash,content_hash,server,analytics_id,"
+                + ",".join(self._CLEARNET_CERT_COLS) + ",last_seen")
+        vals = [host, title, favicon_hash, favicon_phash, content_hash, server, analytics_id]
+        vals += [cert.get(c) or None for c in self._CLEARNET_CERT_COLS]
+        vals.append(utcnow())
+        updatable = ("title", "favicon_hash", "favicon_phash", "content_hash",
+                     "server", "analytics_id") + self._CLEARNET_CERT_COLS
         self.exe(
-            "INSERT INTO clearnet_fingerprints(host,title,favicon_hash,content_hash,"
-            "server,analytics_id,last_seen) VALUES(?,?,?,?,?,?,?) "
-            "ON CONFLICT(host) DO UPDATE SET title=excluded.title, "
-            "favicon_hash=excluded.favicon_hash, content_hash=excluded.content_hash, "
-            "server=excluded.server, analytics_id=excluded.analytics_id, "
-            "last_seen=excluded.last_seen",
-            (host, title, favicon_hash, content_hash, server, analytics_id, utcnow()),
+            f"INSERT INTO clearnet_fingerprints({cols}) VALUES({','.join('?' * len(vals))}) "
+            f"ON CONFLICT(host) DO UPDATE SET last_seen=excluded.last_seen, "
+            + ", ".join(f"{c}=excluded.{c}" for c in updatable),
+            tuple(vals),
         )
 
     def load_clearnet_index(self):
         return self.q(
-            "SELECT host,title,favicon_hash,content_hash,server,analytics_id "
-            "FROM clearnet_fingerprints")
+            "SELECT host,title,favicon_hash,favicon_phash,content_hash,server,analytics_id,"
+            + ",".join(self._CLEARNET_CERT_COLS) +
+            " FROM clearnet_fingerprints")
+
+    def clearnet_fp_by_phash(self, phash, threshold):
+        """Clearnet entries whose perceptual hash is within `threshold` bits.
+
+        Brute force over the index. The index is small (seeded hosts) and
+        hamming distance is not expressible in SQL, so an in-process scan is
+        both simpler and faster than a table scan per candidate.
+        """
+        if not phash:
+            return []
+        out = []
+        for r in self.q("SELECT host,title,favicon_phash FROM clearnet_fingerprints "
+                        "WHERE favicon_phash IS NOT NULL AND favicon_phash != ''"):
+            d = imaging.hamming(phash, r["favicon_phash"])
+            if 0 <= d <= threshold:
+                out.append({"host": r["host"], "title": r["title"], "distance": d})
+        out.sort(key=lambda x: x["distance"])
+        return out
+
+    def provenance_gap(self):
+        """How much of the corpus cannot be traced to a collector.
+
+        Reported rather than repaired. These rows predate provenance tracking,
+        so the origin is genuinely unknown; naming a source for them would
+        manufacture a chain of custody that never existed.
+        """
+        total = self.one("SELECT COUNT(*) c FROM sites")["c"]
+        null = self.one("SELECT COUNT(*) c FROM sites WHERE source_id IS NULL")["c"]
+        by_cat = {r["category"] or "unclassified": r["c"] for r in self.q(
+            "SELECT category, COUNT(*) c FROM sites WHERE source_id IS NULL "
+            "GROUP BY category ORDER BY c DESC")}
+        return {"total_sites": total, "unattributed": null,
+                "attributed": total - null,
+                "pct_attributed": round(100.0 * (total - null) / total, 1) if total else 0.0,
+                "unattributed_by_category": by_cat}
+
+    def source_id(self, name):
+        """Resolve a collector name to its sources.id, registering it when the
+        name has not been seen before. Every ingestion path funnels through here
+        so no row is ever written with a dangling provenance."""
+        if not name:
+            return None
+        row = self.one("SELECT id FROM sources WHERE name=?", (str(name),))
+        if row:
+            return row["id"]
+        self.upsert_source(str(name), "unknown", "", notes="auto-registered on first reference")
+        row = self.one("SELECT id FROM sources WHERE name=?", (str(name),))
+        return row["id"] if row else None
+
+    def add_html_snapshot(self, site_id, url, html, source_id=None, status="",
+                          encoding="", headers=None, collector_version="",
+                          max_bytes=MAX_SNAPSHOT_BYTES, raw_bytes=None):
+        """Retain what the server actually served, for chain of custody.
+
+        The stored hash is always sha256 of the *original response bytes*, even
+        when the body is capped for storage. That is the point: a truncated copy
+        can be re-identified as a truncation (recompute the hash, see the
+        mismatch) and the `truncated` flag says so up front, whereas hashing the
+        stored text would mint a hash that matches nothing that was ever served
+        and quietly launder the evidence.
+
+        `raw_bytes` lets the caller pass the exact bytes when it has them, so
+        the hash is over the wire content rather than a re-encode of the
+        decoded string.
+        """
+        import hashlib
+        import json as _json
+
+        if raw_bytes is None:
+            raw_bytes = (html or "").encode("utf-8", "replace")
+        elif isinstance(raw_bytes, str):
+            raw_bytes = raw_bytes.encode("utf-8", "replace")
+        html_sha = hashlib.sha256(raw_bytes).hexdigest()
+
+        body = html or ""
+        nbytes = len(raw_bytes)
+        truncated = False
+        if max_bytes and nbytes > max_bytes:
+            # Cut on a character boundary of the *decoded* text so the stored
+            # copy stays valid UTF-8.
+            body = body[:max_bytes]
+            truncated = True
+        try:
+            hdr = _json.dumps(headers or {}, default=str, sort_keys=True)[:4000]
+        except Exception:
+            hdr = ""
+        self.exe(
+            "INSERT INTO site_snapshots(site_id,url,ts,source_id,status,encoding,bytes,"
+            "html_sha256,headers,html,truncated,collector_version) "
+            "VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
+            (site_id, url, utcnow(), source_id, str(status or ""), str(encoding or ""),
+             nbytes, html_sha, hdr, body, 1 if truncated else 0, collector_version))
+        self.prune_snapshots(site_id)
+        return {"html_sha256": html_sha, "bytes": nbytes, "truncated": truncated}
+
+    def prune_snapshots(self, site_id, keep=SNAPSHOT_RETENTION):
+        """Bound per-site growth. Evidence is kept, but a crawler re-fetching the
+        same page hourly must not fill the disk with near-duplicate bodies."""
+        if not site_id or keep <= 0:
+            return 0
+        ids = [r["id"] for r in self.q(
+            "SELECT id FROM site_snapshots WHERE site_id=? ORDER BY id DESC", (site_id,))]
+        drop = ids[keep:]
+        for i in drop:
+            self.exe("DELETE FROM site_snapshots WHERE id=?", (i,))
+        return len(drop)
+
+    def latest_snapshot(self, site_id, with_html=True):
+        cols = ("site_id,url,ts,source_id,status,encoding,bytes,html_sha256,headers,"
+                "truncated,collector_version" + (",html" if with_html else ""))
+        r = self.one(
+            f"SELECT {cols} FROM site_snapshots WHERE site_id=? ORDER BY id DESC LIMIT 1",
+            (site_id,))
+        if r and r.get("headers"):
+            try:
+                r["headers"] = json.loads(r["headers"])
+            except Exception:
+                pass
+        return r
+
+    def snapshot_history(self, site_id, limit=20, with_html=False):
+        cols = ("id,site_id,url,ts,status,bytes,html_sha256,truncated" +
+                (",html" if with_html else ""))
+        return [dict(r) for r in self.q(
+            f"SELECT {cols} FROM site_snapshots WHERE site_id=? "
+            f"ORDER BY id DESC LIMIT ?", (site_id, limit))]
+
+    def verify_snapshot(self, site_id, snapshot_id=None):
+        """Re-hash a stored body and report whether it still matches what was
+        recorded at collection time. Detects tampering and storage corruption."""
+        import hashlib
+
+        r = (self.one("SELECT * FROM site_snapshots WHERE id=?", (snapshot_id,))
+             if snapshot_id else self.latest_snapshot(site_id, with_html=True))
+        if not r:
+            return None
+        stored = r.get("html") or ""
+        actual = hashlib.sha256(stored.encode("utf-8", "replace")).hexdigest()
+        recorded = r.get("html_sha256") or ""
+        if r.get("truncated"):
+            verdict = "truncated"        # cannot match by construction
+        elif actual == recorded:
+            verdict = "match"
+        else:
+            # intentional: keep only the verdict, the caller can decide meaning
+            verdict = "mismatch"
+        return {"site_id": site_id, "snapshot_id": r.get("id"),
+                "recorded": recorded, "actual": actual, "verdict": verdict}
 
     def site_last_scan(self, url):
         r = self.one("SELECT last_scan FROM sites WHERE url=?", (url,))
@@ -1288,6 +1495,69 @@ class BaseDB:
             return True
         return False
 
+    def set_user_password(self, username, password_hash):
+        """Replace a stored password. Used by local admin recovery only; there is
+        deliberately no HTTP route that can call this, since a remotely reachable
+        password reset is a takeover primitive, not a feature."""
+        if not self.get_user(username):
+            return None
+        self.exe("UPDATE users SET password_hash=? WHERE username=?", (password_hash, username))
+        return self.get_user(username)
+
+    # ---------- avatar / screenshot hashes ----------
+    def save_image_hash(self, kind, phash, handle="", actor_id=None, site_id=None,
+                        site_url="", url="", exact_hash="", size=0, source_id=None):
+        """Record one avatar/screenshot hash. Idempotent on (kind, phash, handle,
+        site_url) so re-crawling a page does not inflate the ubiquity count -- which
+        would let a single repeated default avatar disqualify itself as "rare" for
+        the wrong reason, and inflate a real operator's count above the limit."""
+        if not kind or not phash:
+            return None
+        existing = self.one(
+            "SELECT * FROM image_hashes WHERE kind=? AND phash=? AND handle=? AND site_url=?",
+            (kind, phash, handle or "", site_url or ""))
+        if existing:
+            if size and (existing.get("bytes") or 0) != size:
+                self.exe("UPDATE image_hashes SET bytes=? WHERE id=?", (size, existing["id"]))
+            return existing
+        self.exe("INSERT INTO image_hashes (kind, phash, exact_hash, handle, actor_id, "
+                 "site_id, site_url, url, bytes, source_id, ts) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+                 (kind, phash, exact_hash or "", handle or "", actor_id, site_id,
+                  site_url or "", url or "", size or 0, source_id, self._now()))
+        return self.one("SELECT * FROM image_hashes WHERE kind=? AND phash=? AND handle=? "
+                        "AND site_url=?", (kind, phash, handle or "", site_url or ""))
+
+    def image_hashes(self, kind=None, actor_id=None):
+        sql = "SELECT * FROM image_hashes WHERE 1=1"
+        args = []
+        if kind:
+            sql += " AND kind=?"
+            args.append(kind)
+        if actor_id is not None:
+            sql += " AND actor_id=?"
+            args.append(actor_id)
+        return [dict(r) for r in self.q(sql + " ORDER BY id", tuple(args))]
+
+    def image_ubiquity(self, kind, phash, actor_id=None):
+        """Distinct actors holding this image, and the stored handles, so the
+        caller can decide whether the image is a default rather than an identity."""
+        actors, handles = set(), set()
+        for r in self.q("SELECT DISTINCT actor_id, handle FROM image_hashes "
+                        "WHERE kind=? AND phash=?", (kind, phash)):
+            if r["actor_id"] is not None:
+                actors.add(r["actor_id"])
+            else:
+                handles.add(r["handle"] or "")
+        return {"actors": len(actors), "handles": sorted(h for h in handles if h),
+                "resolved": bool(actors)}
+
+    def image_hash_stats(self):
+        out = {}
+        for r in self.q("SELECT kind, COUNT(*) n, COUNT(DISTINCT phash) u FROM image_hashes "
+                        "GROUP BY kind"):
+            out[r["kind"]] = {"rows": r["n"], "distinct": r["u"]}
+        return out
+
     def _ensure_columns(self, conn=None):
         """Additive schema migrations so existing stores keep working after new
         columns land. Idempotent on both SQLite (PRAGMA) and Postgres
@@ -1318,9 +1588,21 @@ class BaseDB:
                     pass  # cleared next boot if the ALTER truly never landed
 
         ensure("sites", "lang", "TEXT")
+        ensure("sites", "favicon_phash", "TEXT")
+        ensure("clearnet_fingerprints", "favicon_phash", "TEXT")
         ensure("sites", "cert_sans", "TEXT")
         ensure("sites", "tls_issuer", "TEXT")
         ensure("sites", "cert_fp", "TEXT")
+        ensure("sites", "cert_serial", "TEXT")
+        ensure("sites", "cert_valid_from", "TEXT")
+        ensure("sites", "cert_valid_to", "TEXT")
+        ensure("sites", "ssh_fp", "TEXT")
+        ensure("clearnet_fingerprints", "cert_fp", "TEXT")
+        ensure("clearnet_fingerprints", "cert_serial", "TEXT")
+        ensure("clearnet_fingerprints", "cert_issuer", "TEXT")
+        ensure("clearnet_fingerprints", "cert_valid_from", "TEXT")
+        ensure("clearnet_fingerprints", "cert_valid_to", "TEXT")
+        ensure("clearnet_fingerprints", "ssh_fp", "TEXT")
         ensure("identifiers", "source_id", "INTEGER")
         ensure("identifiers", "content_hash", "TEXT")
         ensure("identifiers", "method", "TEXT")
@@ -1341,25 +1623,34 @@ class SQLiteDB(BaseDB):
     def __init__(self, path=DB_PATH):
         self.path = path
         self.backend = "sqlite"
+        # sqlite3 connections are not thread-safe, and the app runs uvicorn
+        # worker threads alongside crawl thread pools and background collection.
+        # Serialize access on a single connection via the lock: correct and
+        # simpler than per-thread connections for a local file backend.
+        self._lock = threading.RLock()
         os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
-        self.conn = sqlite3.connect(path, check_same_thread=False)
-        self.conn.row_factory = sqlite3.Row
-        self.conn.execute("PRAGMA journal_mode=WAL")
-        self.conn.execute("PRAGMA synchronous=NORMAL")
-        self.conn.executescript(SCHEMA)
-        self.conn.commit()
-        self._ensure_columns()
+        with self._lock:
+            self.conn = sqlite3.connect(path, check_same_thread=False)
+            self.conn.row_factory = sqlite3.Row
+            self.conn.execute("PRAGMA journal_mode=WAL")
+            self.conn.execute("PRAGMA synchronous=NORMAL")
+            self.conn.executescript(SCHEMA)
+            self.conn.commit()
+            self._ensure_columns()
 
     def q(self, sql, args=()):
-        return self.conn.execute(sql, args).fetchall()
+        with self._lock:
+            return self.conn.execute(sql, args).fetchall()
 
     def one(self, sql, args=()):
-        r = self.conn.execute(sql, args).fetchone()
-        return dict(r) if r else None
+        with self._lock:
+            r = self.conn.execute(sql, args).fetchone()
+            return dict(r) if r else None
 
     def exe(self, sql, args=()):
-        c = self.conn.execute(sql, args)
-        self.conn.commit()
+        with self._lock:
+            c = self.conn.execute(sql, args)
+            self.conn.commit()
         return c
 
 

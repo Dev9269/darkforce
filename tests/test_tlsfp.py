@@ -25,6 +25,35 @@ import pytest
 from darkforce import detect, net as net_mod
 from darkforce.db import SQLiteDB
 
+# The cert-parsing tests below build real X.509 objects, so they need the
+# native extension inside `cryptography`. That is a compiled wheel, and an env
+# can easily end up with one built for a different architecture than the
+# running interpreter (here: an arm64 wheel under an x86_64 Python), which
+# raises ImportError at collection. Detect it once and skip those tests with an
+# actionable reason, so the file never has to be excluded from the run to keep
+# the suite green.
+try:
+    import cryptography  # noqa: F401
+    from cryptography import x509  # noqa: F401
+    _CRYPTOGRAPHY_ERROR = None
+except Exception as exc:  # pragma: no cover - environment dependent
+    # dlopen errors are enormous (they list every path tried). Keep the part
+    # that actually explains the mismatch and drop the path noise.
+    detail = str(exc)
+    arch = re.search(r"incompatible architecture \(have '([^']+)', need '([^']+)'\)", detail)
+    if arch:
+        detail = f"wrong-architecture wheel (have {arch.group(1)}, need {arch.group(2)})"
+    else:
+        detail = detail.split(":")[0]
+    _CRYPTOGRAPHY_ERROR = detail
+
+requires_cryptography = pytest.mark.skipif(
+    _CRYPTOGRAPHY_ERROR is not None,
+    reason="cryptography native extension unusable here: "
+           f"{_CRYPTOGRAPHY_ERROR}. Fix with "
+           "`python3 -m pip install --force-reinstall --only-binary=:all: cryptography`.",
+)
+
 
 @pytest.fixture
 def tmp_db():
@@ -138,6 +167,7 @@ def tls_server():
 # tlsfp: TLS peer info extraction
 # --------------------------------------------------------------------------
 
+@requires_cryptography
 def test_fetch_tls_peer_info_extracts_cn_sans_and_fingerprints(tls_server):
     from darkforce import tlsfp
 
@@ -155,6 +185,7 @@ def test_fetch_tls_peer_info_extracts_cn_sans_and_fingerprints(tls_server):
     assert info["cipher"]
 
 
+@requires_cryptography
 def test_san_naming_clearnet_domain_raises_tls_cert_finding(tls_server):
     from darkforce import tlsfp
 
@@ -217,8 +248,16 @@ def _serve_banner(banner):
     return srv, port, t
 
 
-def test_ssh_banner_raw_socket():
+def test_ssh_banner_raw_socket(monkeypatch):
     from darkforce import tlsfp
+
+    # This is the *raw socket* path test: it serves only a banner line, not a
+    # full SSHv2 handshake. With paramiko installed, ssh_banner takes the
+    # paramiko branch and tries to negotiate key exchange against the mock
+    # server, which aborts the socket. Force the raw-socket branch by making
+    # the in-function `import paramiko` fail (the paramiko branch is covered
+    # separately by test_ssh_banner_paramiko_fingerprint).
+    monkeypatch.setitem(sys.modules, "paramiko", None)
 
     srv, port, t = _serve_banner(b"SSH-2.0-OpenSSH_9.0 mock\r\n")
     try:
@@ -274,11 +313,23 @@ def test_ssh_banner_paramiko_fingerprint(monkeypatch):
 # --------------------------------------------------------------------------
 
 class _FakeResp:
-    def __init__(self, status_code=200, html="<html>ok</html>"):
+    """Stands in for a requests.Response.
+
+    `encoding` and `apparent_encoding` are not optional on a real Response, and
+    net.fetch_snap reads both to record the charset that the decoded text came
+    from. They were missing here, so these two tests had been erroring rather
+    than failing since that field was introduced, and nothing about the TLS
+    behaviour they claim to cover was actually being exercised.
+    """
+
+    def __init__(self, status_code=200, html="<html>ok</html>",
+                 encoding=None, apparent_encoding="utf-8"):
         self.status_code = status_code
         self.headers = {"Server": "nginx"}
         self.text = html
         self.content = html.encode()
+        self.encoding = encoding
+        self.apparent_encoding = apparent_encoding
 
 
 def test_fetch_snap_populates_https_tls_meta(monkeypatch):
@@ -467,3 +518,34 @@ def test_check_onion_descriptor_no_record_is_graceful(monkeypatch):
 
     monkeypatch.setattr(seeds, "_get", fake_get)
     assert descriptors.check_onion_descriptor("ghost.onion", observed={}, timeout=10) == []
+
+def test_fetch_snap_records_declared_and_inferred_encoding(monkeypatch):
+    """Evidence hashing must record the charset the decoded text came from.
+
+    net.fetch_snap keeps the exact response bytes and the declared encoding
+    alongside the decoded text, because hashing r.text alone would hash
+    requests' charset guess and let two byte-identical responses differ. These
+    two cases pin both branches of `r.encoding or r.apparent_encoding`.
+    """
+
+    def run_with(encoding, apparent):
+        def fake_get(url, proxies=None, headers=None, timeout=20, verify=True):
+            return _FakeResp(encoding=encoding, apparent_encoding=apparent)
+
+        monkeypatch.setattr(net_mod, "requests", types.SimpleNamespace(get=fake_get))
+        monkeypatch.setattr(net_mod, "_polite_wait", lambda url: None)
+        monkeypatch.setattr(
+            net_mod.tlsfp, "fetch_tls_peer_info",
+            lambda host, port=443, socks_proxy=None, timeout=15: {})
+        return net_mod.fetch_snap("https://enc.example/", timeout=5)
+
+    declared = run_with("iso-8859-1", "utf-8")
+    assert declared.meta["encoding"] == "iso-8859-1"
+
+    # No charset on the wire: fall back to the detected one rather than
+    # silently recording an empty string next to the raw bytes.
+    inferred = run_with(None, "windows-1252")
+    assert inferred.meta["encoding"] == "windows-1252"
+
+    # Raw bytes are retained verbatim, independent of the decoded text.
+    assert declared.meta["raw_bytes"] == b"<html>ok</html>"

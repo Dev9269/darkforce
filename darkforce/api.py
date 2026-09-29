@@ -12,9 +12,10 @@ from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 from slowapi.util import get_remote_address
 
-from . import auth, clearnet_index, detect, link, net, seeds, stylo
+from . import auth, clearnet_index, detect, image_index, intel, link, net, seeds, stylo
 from .collect import crawl_and_ingest
-from .config import ADMIN_PASSWORD, ADMIN_USER, tor_available
+from .config import (ADMIN_PASSWORD, ADMIN_USER, announce_admin_password,
+                     tor_available)
 from .db import DB
 from .export import export as export_resp
 from .tor import active_proxy
@@ -29,12 +30,42 @@ app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
 COLLECT_JOBS = {}
 
+
+def _max_stylo_confidence(database) -> float:
+    """Highest attribution confidence the stylometry evidence actually supports.
+
+    Only *significant* pairs count. Reporting the best raw score regardless of
+    significance is how a coincidence ends up displayed as a finding.
+    """
+    try:
+        _, pairs, _ = stylo.match_all(database)
+    except Exception:
+        return 0.0
+    sig = [r for r in pairs if r.get("significant")]
+    if not sig:
+        return 0.0
+    best = max(float(r.get("score") or 0.0) for r in sig)
+    return round(min(best, link.STYLO_MAX), 2)
+
+
+# Armed once at import from the process environment, which run.py sets only when
+# --enable-probe is passed. Read at import (not per request) so probing cannot
+# be switched on by anything that can write to the environment of a running
+# server.
+PROBE_ARMED = os.environ.get("DARKFORCE_ENABLE_PROBE") == "1"
+
+
 def _seed_admin():
     """Create the initial admin the first time the app runs (config-seeded)."""
     try:
-        db.ensure_admin(ADMIN_USER, auth.hash_password(ADMIN_PASSWORD))
+        created = db.ensure_admin(ADMIN_USER, auth.hash_password(ADMIN_PASSWORD))
     except Exception:
-        pass  # both backends tolerate (e.g. already-seeded race)
+        return  # both backends tolerate (e.g. already-seeded race)
+    # Only disclose a generated password when the account was really created.
+    # Announcing it against a database that already has users would print a
+    # credential that does not work, which trains the operator to ignore it.
+    if created:
+        announce_admin_password()
 
 
 _seed_admin()
@@ -114,6 +145,25 @@ class CaseMemberReq(BaseModel):
     tag: str = ""
 
 
+class EnrichReq(BaseModel):
+    """One enrichment target. Deliberately a single value with no batch field:
+    these call metered third-party APIs, and a bulk endpoint would turn one
+    analyst click into a quota-burning sweep of someone else's free tier."""
+
+    source: str
+    value: str = ""
+
+
+class ProbeReq(BaseModel):
+    """An explicit target list. `url` is accepted as a convenience for a single
+    host, but there is deliberately no field for a range, a depth or a
+    follow-links switch."""
+
+    urls: list[str] = Field(default_factory=list)
+    url: str = ""
+    allow_private: bool = False
+
+
 @app.post("/api/login")
 @limiter.limit("10/minute")
 def login(request: Request, req: LoginReq):
@@ -184,6 +234,89 @@ def evidence(objtype: str, objid: int, who: dict = Depends(auth.require_role("vi
     """Walk an identifier/finding/link/site/actor back to its observed raw
     fragment, the rated source, and any analyst statements on it."""
     return db.evidence_chain(objtype, objid)
+
+
+@app.get("/api/sites/{sid}/snapshots")
+def site_snapshots(sid: int, full: bool = False, body: bool = False,
+                   who: dict = Depends(auth.require_role("viewer"))):
+    """Retained responses for a site, newest first.
+
+    `full` includes the stored body for every version, which is what an analyst
+    needs to diff a page across time. `body` returns only the newest body, for
+    the common "show me the current page" case - returning every version's body
+    by default would be a large response for no reason.
+    """
+    site = db.one("SELECT s.*, src.name source_name FROM sites s "
+                  "LEFT JOIN sources src ON src.id=s.source_id WHERE s.id=?", (sid,))
+    if not site:
+        raise HTTPException(404, "no such site")
+    out = {"site": site, "history": db.snapshot_history(sid, limit=50)}
+    if body:
+        out["current"] = db.latest_snapshot(sid, with_html=True)
+    if full:
+        out["history"] = db.snapshot_history(sid, limit=50, with_html=True)
+    out["integrity"] = db.verify_snapshot(sid)
+    return out
+
+
+@app.post("/api/probe")
+def probe(req: ProbeReq, who: dict = Depends(auth.require_role("analyst"))):
+    """Opt-in read-only GET against an explicit list of analyst-supplied URLs.
+
+    Off unless this deployment was started with DARKFORCE_ENABLE_PROBE=1 at
+    process start, which run.py does only when --enable-probe is passed. The
+    flag is read once into a module constant so a mid-session change cannot
+    turn it on, and each call still takes an explicit URL list - probing never
+    enumerates or follows anything on its own.
+    """
+    from darkforce import probe as probe_mod
+
+    if not PROBE_ARMED:
+        return {"probing_enabled": False,
+                "reason": "this deployment has not enabled probing; restart with --enable-probe"}
+    urls = list(req.urls or []) + ([req.url] if req.url else [])
+    prober = probe_mod.Prober(db, enabled=True,
+                              allow_private=getattr(req, "allow_private", False) is True)
+    return prober.probe_many(urls, analyst=who.get("username", "analyst"))
+
+
+@app.get("/api/probe/status")
+def probe_status(who: dict = Depends(auth.require_role("viewer"))):
+    """Report probing posture without sending anything."""
+    from darkforce import probe as probe_mod
+
+    return {"enabled": PROBE_ARMED, "method": probe_mod.METHOD,
+            "max_requests_per_call": probe_mod.MAX_REQUESTS,
+            "min_host_interval_s": probe_mod.MIN_HOST_INTERVAL,
+            "analyst_triggered_only": True, "autonomous": False}
+
+
+@app.get("/api/clearnet/pivots")
+def clearnet_pivots(limit: int = 100, include_ips: bool = True,
+                    who: dict = Depends(auth.require_role("viewer"))):
+    """Clearnet hosts this corpus points at, ranked.
+
+    Read-only: mines stored post bodies and site rows, fetches nothing.
+    `advertised_sites` is the count that matters for attribution - it is how
+    many distinct darknet pages link the host. `seed_sites` is distribution
+    infrastructure breadth, a different signal.
+    """
+    from darkforce.clearnet_index import mine_clearnet_hosts, pivot_hosts
+
+    return {"mined": mine_clearnet_hosts(db, limit=max(1, min(limit, 1000))),
+            "recommended": pivot_hosts(db, limit=max(1, min(limit, 200)),
+                                       include_ips=include_ips)}
+
+
+@app.get("/api/provenance/gap")
+def provenance_gap(who: dict = Depends(auth.require_role("viewer"))):
+    """Sites with no recorded collector.
+
+    Left visible rather than backfilled with an invented source: the honest
+    answer is that these predate provenance tracking, and a fabricated value
+    would make an untraceable finding look traceable.
+    """
+    return db.provenance_gap()
 
 
 @app.get("/api/sources/trust")
@@ -513,6 +646,7 @@ def _annotate_graph_safety(g, min_prefix=12):
     """
     try:
         site_rows = db.q("SELECT id, url, title, category FROM sites")
+        site_rows = [dict(r) for r in site_rows]
         by_url = {s["url"]: s for s in site_rows}
         urls = [s["url"] for s in site_rows]
 
@@ -939,8 +1073,7 @@ def api_export(fmt: str = "json", q: str = "", kind: str = "all",
             "coverage": f"{st.get('actors', 0)} actors, {st.get('sites', 0)} sites, "
                         f"{st.get('identifiers', 0)} identifiers, {st.get('findings', 0)} findings",
             "verdict": {
-                "confidence": (lambda pairs: round(max([s for _, m in pairs for s in (m.get("score") or 0)] or [0.0]), 2))
-                              (stylo.match_all(db)[2]),
+                "confidence": _max_stylo_confidence(db),
                 "basis": "stylometric n-gram overlap + shared identifiers",
                 "rationale": (f"High-confidence persona linkage is flagged when a handle's n-gram "
                               f"profile is closer than 0.5 to another actor's corpus while sharing "
@@ -1085,6 +1218,20 @@ def collector_health():
     return db.collector_health()
 
 
+@app.get("/healthz")
+def healthz():
+    """Liveness probe for container platforms (Railway/Render/Fly/Spaces).
+
+    Must not require auth and must not hit the network: orchestrators poll this
+    on a schedule and treat failures as a crash.
+    """
+    try:
+        db.one("SELECT 1")
+        return {"status": "ok"}
+    except Exception as e:
+        raise HTTPException(503, f"database unavailable: {e}")
+
+
 class SpaStaticFiles(StaticFiles):
     """StaticFiles with HTML5-history fallback: unknown non-API, non-asset
     paths get index.html so BrowserRouter deep links (/registry) resolve."""
@@ -1100,6 +1247,57 @@ class SpaStaticFiles(StaticFiles):
             if os.path.exists(index):
                 return FileResponse(index)
             raise
+
+
+@app.get("/api/intel/available")
+def intel_available(who: dict = Depends(auth.require_role("viewer"))):
+    """Which enrichment collectors are configured. A missing key is normal, so the
+    UI needs to be able to distinguish 'not configured' from 'broken'."""
+    return {"available": intel.available(),
+            "collectors": {k: {"requires": v["requires"], "input": v["input"]}
+                           for k, v in intel.COLLECTORS.items()}}
+
+
+@app.post("/api/intel/enrich")
+def intel_enrich(req: EnrichReq, who: dict = Depends(auth.require_role("analyst"))):
+    """Look up one value in one collector. Returns the raw result with its
+    provenance and confidence, or a clear 'not configured' rather than an empty
+    success that reads as a clean bill of health."""
+    if req.source not in intel.COLLECTORS:
+        raise HTTPException(400, f"unknown collector: {req.source}")
+    if not req.value.strip():
+        raise HTTPException(400, "value is required")
+    if not intel.available().get(req.source):
+        raise HTTPException(503, f"{req.source} is not configured "
+                                 f"(set {intel.COLLECTORS[req.source]['requires']})")
+    result = intel.collect(req.source, req.value.strip())
+    if result is None:
+        return {"source": req.source, "value": req.value.strip(), "result": None,
+                "note": "no result; for a reputation source that means no adverse "
+                        "history, which is not evidence of innocence"}
+    return {"source": req.source, "value": req.value.strip(), "result": result,
+            "enriched_by": who["username"]}
+
+
+@app.get("/api/images/stats")
+def images_stats(who: dict = Depends(auth.require_role("viewer"))):
+    return {"stored": db.image_hash_stats(),
+            "ubiquity_limit": image_index.UBIQUITY_LIMIT,
+            "thresholds": image_index.ImageIndex.THRESHOLDS}
+
+
+@app.get("/api/images/avatars")
+def images_avatars(actor_id: Optional[int] = None,
+                   who: dict = Depends(auth.require_role("viewer"))):
+    """Stored avatar hashes, optionally for one actor, each annotated with how
+    many actors share it. An avatar on more than the ubiquity limit is a default
+    image, and the count is returned so nobody mistakes it for an identifier."""
+    rows = db.image_hashes(kind="avatar", actor_id=actor_id)
+    for r in rows:
+        u = db.image_ubiquity("avatar", r["phash"])
+        r["shared_by_actors"] = u["actors"] or len(u["handles"])
+        r["is_default_image"] = r["shared_by_actors"] > image_index.UBIQUITY_LIMIT
+    return {"ubiquity_limit": image_index.UBIQUITY_LIMIT, "avatars": rows}
 
 
 app.mount("/", SpaStaticFiles(directory=WEB_DIR, html=True), name="web")
