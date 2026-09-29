@@ -701,10 +701,15 @@ def network_analysis():
     return analyze_network(db)
 
 
-@app.get("/graph", response_class=Response)
+@app.get("/graph-legacy", response_class=Response)
 def graph_view(min_conf: float = 0.0):
     """Standalone interactive entity graph (pyvis/vis.js). Color = node kind,
-    edge thickness = confidence. &min_conf= filters weak links."""
+    edge thickness = confidence. &min_conf= filters weak links.
+
+    Mounted at /graph-legacy, not /graph: the React SPA owns /graph, and a
+    server route here wins over the static mount, so the SPA's relationship
+    graph page was unreachable and every internal link to /graph landed on
+    this legacy vis.js page instead."""
     try:
         import pyvis.network as pv
     except ImportError:

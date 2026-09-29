@@ -1,6 +1,14 @@
-import { memo, useEffect, useMemo, useRef, type MutableRefObject } from "react";
+import { memo, useEffect, useMemo, useRef, useState, type MutableRefObject } from "react";
 import cytoscape, { type Core, type ElementDefinition, type NodeSingular } from "cytoscape";
 import type { GraphResponse, GraphNode } from "@/lib/darkforce";
+
+import {
+  EMPTY_FILTER,
+  edgeId,
+  isFilterActive,
+  partitionGraph,
+  type GraphFilter,
+} from "./graphFilter";
 
 export interface GraphApi {
   zoomIn(): void;
@@ -21,9 +29,17 @@ export interface GraphFilters {
 interface GraphCanvasProps {
   graph?: GraphResponse;
   activeId?: string;
-  filters: GraphFilters;
+  /** Removal-based filters. Optional: Home and Analyst render the graph with no
+   *  sidebar controls, and graphElements treats every field as optional. */
+  filters?: GraphFilters;
   onNodeSelect: (node: GraphNode | null) => void;
   apiRef?: MutableRefObject<GraphApi | null>;
+  /**
+   * Dimming filter from graphFilter.ts. Unlike `filters` (which drops nodes and
+   * reflows the layout), a filtered element is only pushed back visually, so the
+   * analyst keeps the shape of the graph and can still see what was excluded.
+   */
+  filter?: GraphFilter;
 }
 
 const ENTITY_TYPE_COLORS: Record<string, string> = {
@@ -92,10 +108,11 @@ function graphElements(graph?: GraphResponse, filters?: GraphFilters): ElementDe
   const nodes = graph?.nodes ?? graph?.elements?.nodes ?? [];
   const edges = graph?.edges ?? graph?.elements?.edges ?? [];
 
+  // Only category exclusion drops nodes here. Type exclusion is a dimming filter
+  // (see `filter` / graphFilter.ts): removing the nodes would reflow the cose
+  // layout and hide that the excluded nodes existed at all.
   const filteredNodes = nodes.filter((node) => {
-    const entityType = node.entity_type ?? node.type ?? node.kind ?? "entity";
     const category = node.category ?? "unknown";
-    if (filters?.excludedTypes?.includes(entityType)) return false;
     if (filters?.excludedCategories?.includes(category)) return false;
     return true;
   });
@@ -137,7 +154,10 @@ function graphElements(graph?: GraphResponse, filters?: GraphFilters): ElementDe
       group: "edges" as const,
       data: {
         ...edge,
-        id: edge.id ?? `edge-${index}-${edge.source ?? edge.s}-${edge.target ?? edge.t}`,
+        // Shared with graphFilter.partitionGraph: the dimming pass matches edge
+        // ids against the visible set, so if the two derived ids by different
+        // rules every edge would dim the moment a relationship filter is used.
+        id: edgeId(edge, index),
         source: edge.source ?? edge.s,
         target: edge.target ?? edge.t,
         label: edge.label ?? edge.relation ?? edge.e ?? "linked",
@@ -166,15 +186,19 @@ const NODE_BASE_STYLE = {
   "overlay-padding": 6,
 };
 
-export default memo(function GraphCanvas({ graph, activeId, filters, onNodeSelect, apiRef }: GraphCanvasProps) {
+export default memo(function GraphCanvas({ graph, activeId, filters, onNodeSelect, apiRef, filter }: GraphCanvasProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const cyRef = useRef<Core | null>(null);
   const selectedIdRef = useRef(activeId);
   const onSelectRef = useRef(onNodeSelect);
   onSelectRef.current = onNodeSelect;
   const labelsRef = useRef(true);
+  // Tracked here as well as in the parent so the neighbourhood filter can react
+  // to a tap without the parent having to hand the id back down.
+  const [tappedId, setTappedId] = useState<string | null>(null);
 
   const elements = useMemo(() => graphElements(graph, filters), [graph, filters]);
+  const activeFilter = filter ?? EMPTY_FILTER;
 
   const focusNode = (cy: Core, node: NodeSingular) => {
     cy.nodes().removeClass("selected");
@@ -242,6 +266,15 @@ export default memo(function GraphCanvas({ graph, activeId, filters, onNodeSelec
         { selector: "node.dimmed", style: { "opacity": 0.15 } },
         { selector: "edge.dimmed", style: { "opacity": 0.06 } },
 
+        // Dimming filter (graphFilter.ts). These elements stay on the canvas so
+        // the graph keeps its shape; they are only pushed back visually. Declared
+        // after .selected so a node the analyst is inspecting is never dimmed by
+        // its own filter.
+        { selector: "node.filtered", style: { "opacity": 0.13, "text-opacity": 0.08 } },
+        { selector: "edge.filtered", style: { "opacity": 0.05, "text-opacity": 0 } },
+        { selector: "node.filtered:selected", style: { "opacity": 1, "text-opacity": 1 } },
+        { selector: "edge.filtered:selected", style: { "opacity": 1, "text-opacity": 1 } },
+
         // Base edge
         {
           selector: "edge",
@@ -294,12 +327,14 @@ export default memo(function GraphCanvas({ graph, activeId, filters, onNodeSelec
 
     cy.on("tap", "node", (event) => {
       focusNode(cy, event.target);
+      setTappedId(String(event.target.id()));
       onSelectRef.current(event.target.data() as GraphNode);
     });
     cy.on("tap", (event) => {
       if (event.target === cy) {
         cy.elements().removeClass("dimmed");
         cy.nodes().removeClass("selected");
+        setTappedId(null);
         onSelectRef.current(null);
       }
     });
@@ -337,6 +372,25 @@ export default memo(function GraphCanvas({ graph, activeId, filters, onNodeSelec
       if (apiRef) apiRef.current = null;
     };
   }, [elements, filters]);
+
+  // Apply the dimming filter by class rather than removing elements, so toggling
+  // a filter never reflows the cose layout or loses the surrounding shape.
+  useEffect(() => {
+    const cy = cyRef.current;
+    if (!cy) return;
+    cy.elements().removeClass("filtered");
+    if (!isFilterActive(activeFilter) && !tappedId) return;
+    const { visibleNodeIds, visibleEdgeIds } = partitionGraph(graph, activeFilter, tappedId);
+    cy.batch(() => {
+      cy.nodes().forEach((node) => {
+        // Never dim the node the analyst is currently inspecting.
+        if (!visibleNodeIds.has(String(node.id())) && String(node.id()) !== tappedId) node.addClass("filtered");
+      });
+      cy.edges().forEach((edge) => {
+        if (!visibleEdgeIds.has(String(edge.id()))) edge.addClass("filtered");
+      });
+    });
+  }, [activeFilter, graph, tappedId, elements]);
 
   return <div id="cy" ref={containerRef} className="h-full min-h-[420px] w-full" data-testid="relationship-graph-canvas" />;
 });

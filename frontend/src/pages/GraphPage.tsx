@@ -1,10 +1,18 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { AlertTriangle, ArrowLeft, LoaderCircle, Layers, Network, SlidersHorizontal, ZoomIn, ZoomOut, RotateCcw, Maximize2, Minimize2, Tags, Filter, Search, Users, Globe, Shield, Database, Download, Minimize2 as Minimize2Icon, Maximize2 as Maximize2Icon, Copy, Check, X } from "lucide-react";
 import { Link, useSearchParams } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import GraphCanvas, { type GraphApi, type GraphFilters } from "@/components/GraphCanvas";
+import GraphFilterBar from "@/components/GraphFilterBar";
+import {
+  EMPTY_FILTER,
+  graphFacets,
+  toggleValue,
+  visibleCounts,
+  type GraphFilter,
+} from "@/components/graphFilter";
 import { getGraph, getCategories, getText, clampConfidence, type GraphNode } from "@/lib/darkforce";
 
 const SAFETY_COLORS: Record<string, string> = {
@@ -36,14 +44,30 @@ const ENTITY_TYPES = [
 export default function GraphPage() {
   const [searchParams] = useSearchParams();
   const initialConf = clampConfidence(Number.parseFloat(searchParams.get("min_conf") ?? ""));
-  const [minConf, setMinConf] = useState(Number.isNaN(initialConf) ? 0.6 : initialConf);
-  const [searchQuery, setSearchQuery] = useState("");
-  const [excludedTypes, setExcludedTypes] = useState<string[]>([]);
+  // Single source of truth for every filter on this page. The sidebar controls
+  // and the relationship filter bar both read and write this object, so the two
+  // UIs can never disagree about what is currently hidden.
+  const [filter, setFilter] = useState<GraphFilter>(() => ({
+    ...EMPTY_FILTER,
+    minConfidence: Number.isNaN(initialConf) ? 0.6 : initialConf,
+  }));
   const [excludedCategories, setExcludedCategories] = useState<string[]>([]);
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [showLabels, setShowLabels] = useState(true);
   const [selectedNode, setSelectedNode] = useState<GraphNode | null>(null);
   const graphApiRef = useState<GraphApi | null>(null);
+
+  const minConf = filter.minConfidence;
+  const searchQuery = filter.query;
+  const excludedTypes = filter.hiddenTypes;
+
+  const setMinConf = useCallback((value: number) => {
+    setFilter((prev) => ({ ...prev, minConfidence: value }));
+  }, []);
+
+  const setSearchQuery = useCallback((value: string) => {
+    setFilter((prev) => ({ ...prev, query: value }));
+  }, []);
 
   const filters: GraphFilters = {
     minConfidence: minConf,
@@ -72,7 +96,7 @@ export default function GraphPage() {
   const edges = graphQuery.data?.edges ?? graphQuery.data?.elements?.edges ?? [];
 
   const toggleType = useCallback((type: string) => {
-    setExcludedTypes((prev) => prev.includes(type) ? prev.filter((t) => t !== type) : [...prev, type]);
+    setFilter((prev) => ({ ...prev, hiddenTypes: toggleValue(prev.hiddenTypes, type) }));
   }, []);
 
   const toggleCategory = useCallback((cat: string) => {
@@ -80,11 +104,15 @@ export default function GraphPage() {
   }, []);
 
   const clearAllFilters = useCallback(() => {
-    setMinConf(0);
-    setSearchQuery("");
-    setExcludedTypes([]);
+    setFilter({ ...EMPTY_FILTER, minConfidence: 0 });
     setExcludedCategories([]);
   }, []);
+
+  const graphFacetsData = useMemo(() => graphFacets(graphQuery.data), [graphQuery.data]);
+  const graphCounts = useMemo(
+    () => visibleCounts(graphQuery.data, filter, selectedNode ? String(selectedNode.id) : null),
+    [graphQuery.data, filter, selectedNode],
+  );
 
   const toggleGraphLabels = useCallback(() => setShowLabels(graphApiRef.current?.toggleLabels() ?? false), []);
   const toggleFullscreen = useCallback(() => {
@@ -303,6 +331,15 @@ export default function GraphPage() {
               </div>
             </div>
             {categoryChips}
+            <GraphFilterBar
+              facets={graphFacetsData}
+              filter={filter}
+              onChange={setFilter}
+              shownNodes={graphCounts.nodes}
+              shownEdges={graphCounts.edges}
+              selectedLabel={selectedNode ? getText(selectedNode.label ?? selectedNode.id) : null}
+              testId="graph-relationship-filter"
+            />
             <div className={`graph-stage${isFullscreen ? " graph-stage-fullscreen" : ""}`} data-testid="graph-main-stage">
               {graphToolbar}
               {isFullscreen && (
@@ -310,12 +347,8 @@ export default function GraphPage() {
               )}
               <GraphCanvas
                 graph={graphQuery.data}
-                filters={{
-                  minConfidence: minConf,
-                  searchQuery,
-                  excludedTypes,
-                  excludedCategories,
-                }}
+                filters={filters}
+                filter={filter}
                 onNodeSelect={setSelectedNode}
                 apiRef={graphApiRef}
               />
