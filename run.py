@@ -29,9 +29,13 @@ def run_pass(db, tor, max_sites=None, verbose=True, crawl_cap=None):
 
     if verbose:
         print("[live] seeding...")
-    for s in ("directory", "darkfail", "onionoo", "ahmia", "ransomware",
-              "tor66", "azidal", "thedarknet", "notevil",
-              "telegram", "clearnet", "urlhaus", "resource", "news", "successor"):
+    # Order matters: the per-pass cap is consumed in this sequence, and
+    # clearnet sources yield fetchable pages while the .onion directories yield
+    # addresses that need a working Tor circuit. Fetchable-first means a Tor-less
+    # or Tor-cold deployment still ingests real content.
+    for s in ("clearnet", "urlhaus", "resource", "news", "ransomware",
+              "directory", "darkfail", "tor66", "azidal", "thedarknet",
+              "notevil", "ahmia", "telegram", "onionoo", "successor"):
         try:
             if s == "successor":
                 items = seeds.collect_successor_probes(db)
@@ -46,6 +50,14 @@ def run_pass(db, tor, max_sites=None, verbose=True, crawl_cap=None):
         for it in items:
             url = it["url"]
             if not url or db.site_id(url):
+                continue
+            # Some sources yield identifiers rather than fetchable URLs (onionoo
+            # emits bare "torrelay:<fingerprint>" relay handles, successions emit
+            # handle names). Ingesting those fills the site table with rows the
+            # crawler can never fetch, so require a real http(s) origin here.
+            if not str(url).lower().startswith(("http://", "https://")):
+                if verbose:
+                    print(f"[live] {s}: skipping non-URL seed {url!r}")
                 continue
             purpose = it.get("purpose") or ""
             # A collector-level category is provenance ("came from a directory"),
