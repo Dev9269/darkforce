@@ -56,7 +56,7 @@ function ThemeToggle() {
       onClick={() => setDark((d) => !d)}
       style={{
         position: "fixed",
-        top: 12,
+        bottom: 12,
         right: 12,
         zIndex: 60,
         width: 34,

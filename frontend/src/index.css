@@ -2154,7 +2154,10 @@
   }
 }
 body {
-  min-width: 960px;
+  /* The console is a dense desktop layout, but a hard 960px floor made every
+     smaller viewport scroll horizontally, which pushed the rightmost header
+     controls (Refresh / Export report) out of view. Go fluid below 960. */
+  min-width: 320px;
   background: var(--c-page);
 }
 button, input, select, summary {
@@ -2192,11 +2195,14 @@ button:active {
   z-index: 1;
 }
 .console-header {
-  height: 70px;
+  min-height: 70px;
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 0 32px;
+  flex-wrap: wrap;
+  row-gap: 10px;
+  column-gap: 20px;
+  padding: 12px 32px;
   border-bottom: 1px solid var(--c-border);
   background: rgba(11, 17, 20, .9);
   position: sticky;
@@ -2251,6 +2257,13 @@ button:active {
 }
 .header-actions {
   gap: 8px;
+  /* The action row holds ~11 controls. Without wrapping it sets the page's
+     min-content width, which pushed "Export report" past the right edge on any
+     viewport under ~1600px and forced a 960px-wide body on phones. */
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  row-gap: 8px;
+  min-width: 0;
 }
 .console-main {
   padding: 24px 32px 18px;
@@ -3394,6 +3407,24 @@ button:active {
   }
   .console-footer {
     flex-wrap: wrap;
+  }
+}
+@media (max-width: 900px) {
+  .console-header, .console-main {
+    padding-left: 14px;
+    padding-right: 14px;
+  }
+  /* Below the 1240px breakpoint the grid still declares 470px minimum columns,
+     so single-column stacking is what actually keeps content in frame. */
+  .dashboard-grid, .right-column, .stat-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .header-context {
+    flex-wrap: wrap;
+    row-gap: 6px;
+  }
+  .header-actions {
+    justify-content: flex-start;
   }
 }
 @property --tw-translate-x {
