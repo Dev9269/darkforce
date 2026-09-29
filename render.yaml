@@ -1,0 +1,21 @@
+services:
+  - type: web
+    name: darkforce
+    runtime: docker
+    repo: https://github.com/Dev9269/darkforce
+    plan: free
+    branch: master
+    dockerfilePath: ./Dockerfile
+    healthCheckPath: /healthz
+    healthCheckTimeout: 300
+    envVars:
+      - key: DATA_MODE
+        value: demo
+      - key: ADMIN_USER
+        value: admin
+      - key: ADMIN_PASSWORD
+        value: admin
+      - key: SECRET_KEY
+        generateValue: true
+      - key: PORT
+        value: 8000
