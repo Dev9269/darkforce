@@ -13,7 +13,37 @@ if [ "$(id -u)" = "0" ]; then
     # Volumes reject chown on some backends; failure here is not fatal because
     # the app also works fully in-memory when the dir is not writable.
     chown -R "$APP_UID:$APP_GID" "$DATA_DIR" 2>/dev/null || true
+
+    # Tor: the image ships the distro `tor` package, which is far smaller than
+    # the vendored expert bundle. Start it before dropping privileges so the app
+    # finds a live SOCKS listener on 127.0.0.1:9050 (external_running()).
+    # Without Tor the collector still works, but .onion seeds are unreachable.
+    if [ "${ENABLE_TOR:-1}" = "1" ] && command -v tor >/dev/null 2>&1; then
+        TOR_DATA="$DATA_DIR/tor"
+        mkdir -p "$TOR_DATA"
+        chown -R "$APP_UID:$APP_GID" "$TOR_DATA" 2>/dev/null || true
+        tor --DataDirectory "$TOR_DATA" \
+            --SocksPort 9050 \
+            --CookieAuthentication 0 \
+            --Log 'notice stdout' >"$DATA_DIR/tor-container.log" 2>&1 &
+        echo "[entrypoint] tor started (pid $!), waiting for SOCKS..."
+    fi
+
     exec gosu "$APP_UID:$APP_GID" "$0" "$@"
+fi
+
+# Wait for the SOCKS port so the first collection pass does not start blind.
+# /dev/tcp is a bash feature, so probe with python instead (already a dep).
+if [ "${ENABLE_TOR:-1}" = "1" ]; then
+    i=0
+    while [ $i -lt 30 ]; do
+        if python -c "import socket,sys; s=socket.socket(); s.settimeout(1); sys.exit(0 if s.connect_ex(('127.0.0.1',9050))==0 else 1)"; then
+            echo "[entrypoint] tor SOCKS ready after ${i}s"
+            break
+        fi
+        i=$((i + 1))
+        sleep 1
+    done
 fi
 
 # demo (default): seeded corpus, no outbound crawling, ready immediately
