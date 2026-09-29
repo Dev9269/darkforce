@@ -7,6 +7,7 @@ WORKDIR /app
 RUN apt-get update && apt-get install -y --no-install-recommends \
         tor \
         curl \
+        gosu \
     && rm -rf /var/lib/apt/lists/*
 
 COPY requirements.txt .
@@ -14,19 +15,13 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY . .
 
-# Run as non-root with a writable data dir (SQLite + generated secrets).
-RUN mkdir -p /app/data && chown -R 65534:65534 /app/data
-USER 65534
+# Managed hosts mount the volume as root:root, so the app must start as root to
+# chown /app/data, then drop to the unprivileged user for the actual server.
+# gosu does this without a second process left behind.
+COPY docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
+RUN chmod +x /usr/local/bin/docker-entrypoint.sh
 
-# Architecture of the entrypoint: the image is generic and always starts the
-# server; the DATA_MODE env chooses what populates the dashboard on first boot.
-#   demo (default): seeded corpus - instant data, no outbound crawling, perfect
-#                   for review/video/oommf
-#   live:           pulls real clearnet seeds and crawls them on startup
-# Set DATA_MODE=live (or DAEMON_MODE=1) to change it on the host.
 ENV DATA_MODE=demo
 EXPOSE 8000
-ENTRYPOINT ["sh", "-c", "python run.py --${DATA_MODE}${DAEMON_MODE:+ --daemon --live}"]
-
-HEALTHCHECK --interval=30s --timeout=10s --start-period=90s --retries=3 \
-  CMD curl -f http://localhost:${PORT:-8000}/healthz || exit 1
+ENTRYPOINT ["/usr/local/bin/docker-entrypoint.sh"]
+CMD []
