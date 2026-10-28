@@ -18,7 +18,7 @@ if [ "$(id -u)" = "0" ]; then
     # the vendored expert bundle. Start it before dropping privileges so the app
     # finds a live SOCKS listener on 127.0.0.1:9050 (external_running()).
     # Without Tor the collector still works, but .onion seeds are unreachable.
-    if [ "${ENABLE_TOR:-1}" = "1" ] && command -v tor >/dev/null 2>&1; then
+    if [ "${ENABLE_TOR:-1}" = "1" ] && command -v tor >/dev/null 2>&1 && { [ "${DATA_MODE:-demo}" = "live" ] || [ -n "$DAEMON_MODE" ]; }; then
         TOR_DATA="$DATA_DIR/tor"
         mkdir -p "$TOR_DATA"
         chown -R "$APP_UID:$APP_GID" "$TOR_DATA" 2>/dev/null || true
@@ -38,7 +38,7 @@ fi
 # Wait for SOCKS. A cold Tor bootstrap routinely takes 30-90s, so allow 150s:
 # starting the first collection pass before the circuit is up just fails every
 # .onion fetch and the results are cached as "unreachable" for the sweep window.
-if [ "${ENABLE_TOR:-1}" = "1" ]; then
+if [ "${ENABLE_TOR:-1}" = "1" ] && { [ "${DATA_MODE:-demo}" = "live" ] || [ -n "$DAEMON_MODE" ]; }; then
     i=0
     while [ $i -lt 150 ]; do
         if python -c "import socket,sys; s=socket.socket(); s.settimeout(1); sys.exit(0 if s.connect_ex(('127.0.0.1',9050))==0 else 1)" 2>/dev/null; then
