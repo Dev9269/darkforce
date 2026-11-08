@@ -15,9 +15,9 @@ import pytest
 from darkforce import detect, net as net_mod
 
 FAVICON = b"\x89PNG\r\n" + b"\x00" * 48
-FAVICON_SHA = hashlib.sha1(FAVICON).hexdigest()
+FAVICON_SHA = hashlib.sha1(FAVICON, usedforsecurity=False).hexdigest()
 ONION_HTML = "<html><body>alpha content</body></html>"
-ONION_HTML_SHA = hashlib.sha1(ONION_HTML.encode("utf-8")).hexdigest()
+ONION_HTML_SHA = hashlib.sha1(ONION_HTML.encode("utf-8"), usedforsecurity=False).hexdigest()
 
 
 @pytest.fixture
@@ -40,7 +40,7 @@ def _cn_snap(host, html, favicon=None, server=""):
 
 
 def _onion_snap(favicon=None, html=ONION_HTML, server=""):
-    return detect.Snap(url=f"http://swap{hashlib.md5(html.encode()).hexdigest()[:6]}.onion",
+    return detect.Snap(url=f"http://swap{hashlib.md5(html.encode(), usedforsecurity=False).hexdigest()[:6]}.onion",
                        html=html, favicon=favicon,
                        headers={"Server": server} if server else {},
                        meta={"hostname": "swap.onion"})

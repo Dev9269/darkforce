@@ -43,8 +43,8 @@ def sha(s):
     import hashlib
 
     if isinstance(s, bytes):
-        return hashlib.sha1(s).hexdigest()
-    return hashlib.sha1(s.encode("utf-8")).hexdigest()
+        return hashlib.sha1(s, usedforsecurity=False).hexdigest()
+    return hashlib.sha1(s.encode("utf-8"), usedforsecurity=False).hexdigest()
 
 
 SHARED_POOL = [

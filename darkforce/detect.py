@@ -42,7 +42,7 @@ class Snap:
 
 
 def _hash(b):
-    return hashlib.sha1(b).hexdigest() if b else None
+    return hashlib.sha1(b, usedforsecurity=False).hexdigest() if b else None
 
 
 def _clearnet_names(*values):
@@ -61,7 +61,7 @@ def _clearnet_names(*values):
 def fingerprint(snap):
     """Stable identifiers that allow cross-site correlation."""
     h = _hash(snap.favicon)
-    c = hashlib.sha1(snap.html.encode("utf-8", "ignore")).hexdigest()
+    c = hashlib.sha1(snap.html.encode("utf-8", "ignore"), usedforsecurity=False).hexdigest()
     return {
         # Byte-exact digest: proves two responses were the same file.
         "favicon_hash": h,

@@ -276,7 +276,7 @@ def test_ssh_banner_paramiko_fingerprint(monkeypatch):
             return b"\x00\x01keyblob"
 
         def get_fingerprint(self):
-            return hashlib.md5(b"\x00\x01keyblob").digest()
+            return hashlib.md5(b"\x00\x01keyblob", usedforsecurity=False).digest()
 
         def get_name(self):
             return "ssh-ed25519"

@@ -655,7 +655,7 @@ class BaseDB:
     def save_post(self, handle, site_id, url, title, body, ts, lang="en"):
         import hashlib
 
-        ch = hashlib.sha1((title + body).encode("utf-8", "ignore")).hexdigest()
+        ch = hashlib.sha1((title + body).encode("utf-8", "ignore"), usedforsecurity=False).hexdigest()
         self.exe(
             "INSERT INTO posts(handle,site_id,url,title,body,ts,lang,content_hash) VALUES(?,?,?,?,?,?,?,?)",
             (handle, site_id, url, title, body, ts, lang, ch),
