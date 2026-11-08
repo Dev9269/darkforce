@@ -164,7 +164,7 @@ def fetch_tls_peer_info(host, port=443, socks_proxy=None, timeout=15):
             parsed = _x509_from_der(der)
             info.update(parsed)
             info["cert_fp"] = _fmt_fp(hashlib.sha256(der).digest())
-            info["cert_fp_sha1"] = _fmt_fp(hashlib.sha1(der).digest())
+            info["cert_fp_sha1"] = _fmt_fp(hashlib.sha1(der, usedforsecurity=False).digest())
             return info
     except Exception:
         return {}

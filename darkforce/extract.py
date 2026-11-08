@@ -382,7 +382,7 @@ def pgp_fingerprint(key_body):
     version = key_body[0]
     if version == 4:
         prefix = b"\x99" + len(key_body).to_bytes(2, "big")
-        digest = hashlib.sha1(prefix + key_body).hexdigest().upper()
+        digest = hashlib.sha1(prefix + key_body, usedforsecurity=False).hexdigest().upper()
     elif version == 6:
         prefix = b"\x9b" + len(key_body).to_bytes(4, "big")
         digest = hashlib.sha256(prefix + key_body).hexdigest().upper()
@@ -475,7 +475,7 @@ def extract_identifiers(text, provenance="prose"):
 
 
 def content_hash(text):
-    return hashlib.sha1(text.encode("utf-8", "ignore")).hexdigest()
+    return hashlib.sha1(text.encode("utf-8", "ignore"), usedforsecurity=False).hexdigest()
 
 
 def extract_page_handles(text):
