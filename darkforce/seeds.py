@@ -467,6 +467,11 @@ async def _telegram_pull(api_id, api_hash, session, channels, limit=25):
 
 
 DREAD_HF_DATASET = "trentmkelly/dread-crime-forum"
+# Pin to a reviewed commit so a mutable "main" can't silently change ingested data.
+# Override with DREAD_HF_REVISION if you have vetted a newer revision.
+DREAD_HF_REVISION = os.getenv(
+    "DREAD_HF_REVISION", "64b0e5fbc1dcc5909901e54a5181e305a3fce2fe"
+)
 DREAD_HF_PATH = os.getenv("DREAD_HF_PATH", "")  # optional local parquet path
 
 
@@ -486,7 +491,9 @@ def collect_dread_hf(limit: int = 200):
         if DREAD_HF_PATH:
             ds = load_dataset("parquet", data_dir=DREAD_HF_PATH, split="train")
         else:
-            ds = load_dataset(DREAD_HF_DATASET, split="train")
+            ds = load_dataset(
+                DREAD_HF_DATASET, split="train", revision=DREAD_HF_REVISION
+            )
     except Exception:
         return out
     count = 0
